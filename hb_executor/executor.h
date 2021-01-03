@@ -11,9 +11,6 @@
 #include "../../concurrent_data_structures/concurrent_data_structures/array_blocking_queue.h"
 namespace hungbiu
 {	
-	class worker_handle;
-	template <typename F>
-	concept ForkJoinTask = std::is_invocable<F, worker_handle&>::value;
 	class hb_executor
 	{	
 	public:
@@ -25,37 +22,96 @@ namespace hungbiu
 
 		friend bool future_ready(std::future<T>& fut)
 		{
-			auto status = fut.wait_for(std::chrono::nanoseconds(1)));
+			auto status = fut.wait_for( std::chrono::nanoseconds{1} );
 			return std::future_status::ready == status;
 		}
+		
+		// --------------------------------------------------------------------------------
+		// worker_handler
+		// used by task object to submit work
+		// --------------------------------------------------------------------------------
 	private:
-		class worker_handle;
+		class worker;
+	public:
+		class worker_handle
+		{
+			worker* ptr_worker_;
+		public:
+			worker_handle(worker* worker) noexcept :
+				ptr_worker_(worker) {}
+			worker_handle(const worker_handle& oth) noexcept :
+				ptr_worker_(oth.ptr_worker_) {}
+			worker_handle& operator=(const worker_handle& rhs) noexcept
+			{
+				if (this != &rhs) ptr_worker_ = rhs.ptr_worker_;
+				return *this;
+			}
+
+			// Enqueue
+			template <typename F, typename R = std::invoke_result_t<F, worker_handle&>>
+			requires std::invocable<F, hb_executor::worker_handle&>
+				[[nodiscard]] future_t<R> run_later(F&& func) const
+			{
+				if (ptr_worker_->etor_.is_done()) {
+					return future_t<R>();
+				}
+				auto t = make_task<F, R>(std::forward<F>(func));
+				auto fut = t.get_future();
+				ptr_worker_->enqueue(task_wrapper{ std::move(t) });
+				return fut;
+			}
+
+			// Push stack
+			template <typename F, typename R = std::invoke_result_t<F, worker_handle&>>
+			requires std::invocable<F, hb_executor::worker_handle&>
+				[[nodiscard]] future_t<R> run_next(F&& func) const
+			{
+				if (ptr_worker_->etor_->is_done()) {
+					return future_t<R>();
+				}
+				auto t = make_task<F, R>(std::forward<F>(func));
+				auto fut = t.get_future(); ;
+				ptr_worker_->push_stack(task_wrapper{ std::move(t) });
+				return fut;
+			}
+		}; // end of class worker handle
+
+	private:
+		// --------------------------------------------------------------------------------
+		// task_t
+		// Erase function object's type but leaves return type and arg type(s)
+		// --------------------------------------------------------------------------------
 		template <typename R>
-		using task_t = std::packaged_task<R(worker_handle&)>;
+		using task_t = std::packaged_task<R(worker_handle&)>;		
 		template <typename F, typename R>
 		static task_t<R> make_task(F&& func)
 		{
 			using F_decay = std::decay_t<F>;
 			return task_t<R>(std::forward<F_decay>(func));
 		}
+		
+		// --------------------------------------------------------------------------------
+		// task_wrapper
+		// Erase all type info
+		// --------------------------------------------------------------------------------
 		struct task_wrapper_concept
 		{
 			virtual ~task_wrapper_concept() {}
 			virtual void run(worker_handle&) = 0;
 		};
 		template <typename T>
-		class task_wrapper_model : task_wrapper_concept
+		class task_wrapper_model : public task_wrapper_concept
 		{
 			T task_;
 		public:
 			~task_wrapper_model() {}			
 			task_wrapper_model(T&& f) :
-				task_(std::move(T)) {}
+				task_(std::forward<T>(f)) {}
 			task_wrapper_model(task_wrapper_model&& oth) :
 				task_(std::move(oth.task_)) {}
 			task_wrapper_model& operator=(task_wrapper_model&& rhs)
 			{
-				if (this != &oth) {
+				if (this != &rhs) {
 					task_ = std::move(rhs.task_);
 				}
 				return *this;
@@ -67,7 +123,7 @@ namespace hungbiu
 			{
 				task_.operator()(h);
 			}
-		};
+		};		
 		class task_wrapper
 		{
 			std::unique_ptr<task_wrapper_concept> p_task_;
@@ -77,12 +133,16 @@ namespace hungbiu
 			task_wrapper(task_t<R>&& t)
 			{
 				using model_t = task_wrapper_model<task_t<R>>;
+				static_assert(std::is_base_of_v<task_wrapper_concept, model_t>, 
+							  "task_wrapper_concept is not base class of model_t!\n");
+				static_assert(std::is_convertible_v<model_t*, task_wrapper_concept*>,
+							  "model_t* can't be converted to task_wrapper_concept*!\n");
 				p_task_ = std::make_unique<model_t>(std::move(t));
 			}
-			task_wrapper(task_wrapper&& oth) :
+			task_wrapper(task_wrapper&& oth) noexcept :
 				p_task_(std::move(oth.p_task_))	{}
 			~task_wrapper() {}
-			task_wrapper& operator=(task_wrapper&& rhs)
+			task_wrapper& operator=(task_wrapper&& rhs) noexcept
 			{
 				if (this != &rhs) {
 					p_task_ = std::move(rhs.p_task_);
@@ -104,6 +164,10 @@ namespace hungbiu
 				p_task_->run(h);
 			}
 		};
+		
+		// --------------------------------------------------------------------------------
+		// A worker is the working context of an OS thread
+		// --------------------------------------------------------------------------------
 		class worker
 		{
 			friend class worker_handle;
@@ -113,7 +177,7 @@ namespace hungbiu
 			using deque_t = concurrent_std_deque<T>;
 
 			std::atomic<bool> associated_{ false };
-			hb_executor& etor_;
+			hb_executor* etor_;
 			const std::size_t index_;
 			deque_t<task_wrapper> run_stack_;
 				
@@ -132,9 +196,13 @@ namespace hungbiu
 		public:
 			//static constexpr auto RUN_QUEUE_SIZE = 256u;
 			worker(hb_executor& etor, std::size_t idx) :
-				etor_(etor), index_(idx) {}
+				etor_(&etor), index_(idx) {}
 			~worker() {}
-			worker(const worker&) = delete;
+			worker(worker&& oth) noexcept :
+				associated_(oth.associated_.load()), 
+				etor_(std::exchange(oth.etor_, nullptr)),
+				index_(oth.index_),
+				run_stack_(std::move(oth.run_stack_)) {}
 			worker& operator=(const worker&) = delete;
 
 			[[nodiscard]] bool is_associated() const noexcept
@@ -148,14 +216,14 @@ namespace hungbiu
 				}
 				auto h = get_handle();
 				task_wrapper tw;
-				while (!etor_.is_done()) {
+				while (!etor_->is_done()) {
 					// get work from local stack 
 					if (pop_stack(tw)) {
 						tw.run(h);
 						continue;
 					}
 					// steal from others
-					if (etor_.steal(tw, index_)) {
+					if (etor_->steal(tw, index_)) {
 						tw.run(h);
 						continue;
 					}
@@ -175,10 +243,30 @@ namespace hungbiu
 				return worker_handle{ this };
 			}
 		};		
+		// Worker thread's main function
+		static void thread_main(hb_executor* this_, std::size_t init_idx)
+		{
+			// 
+			this_->workers_[init_idx].operator()();
+			for (;;) {
+				if (this_->is_done()) { 
+					return; 
+				}
+				for (auto& w : this_->workers_) {
+					if (w.is_associated()) {
+						continue;
+					}
+					else {
+						w.operator()();
+					}
+				}
+			}
+		}
 
 		mutable std::atomic<bool> is_done_{ false };
 		std::vector<worker> workers_;
 		std::vector<std::thread> threads_;
+	
 	public:
 		bool done() const noexcept
 		{
@@ -189,7 +277,9 @@ namespace hungbiu
 		{
 			return is_done_.load(std::memory_order_acquire);
 		}
+
 	private:
+		// not thread-safe (single producer, multi consumers)
 		std::size_t random_idx() noexcept
 		{
 			static std::mt19937_64 engine;
@@ -212,8 +302,8 @@ namespace hungbiu
 		{
 			static constexpr auto MAX_RAND_STEAL_ATTEMPTS = 64u;
 
+			// Try stealing randomly 
 			const auto sz = workers_.size();
-			// Randomized stealing for a couple times
 			for (auto i = 0; i != MAX_RAND_STEAL_ATTEMPTS; ++i) {
 				auto victim_idx = random_idx() % sz;
 				if (victim_idx == idx) {
@@ -223,7 +313,9 @@ namespace hungbiu
 					return true;
 				}
 			}
-			// If task not found, decay to traversal
+
+			// If failed to find a victim after pre-def attempts, 
+			// decay to traversal
 			for (auto i = 0; i != sz; ++i) {
 				if (workers_[i].try_steal(tw)) {
 					return true;
@@ -231,74 +323,15 @@ namespace hungbiu
 			}
 			return false;
 		}		
-		static void thread_main(hb_executor* this_, std::size_t init_idx)
-		{
-			this_->workers_[init_idx].operator()();
-			for (;;) {
-				if (this_->is_done()) { 
-					return; 
-				}
-				for (auto& w : this_->workers_) {
-					if (w.is_associated()) {
-						continue;
-					}
-					else {
-						w.operator()();
-					}
-				}
-			}
-		}
-	public:		
-		
-		class worker_handle
-		{
-			worker* worker_;
-		public:
-			worker_handle(worker* worker) noexcept :
-				worker_(worker) {}
-			worker_handle(const worker_handle& oth) noexcept :
-				worker_(oth.worker_) {}
-			worker_handle& operator=(const worker_handle& rhs) noexcept
-			{
-				if (this != &rhs) worker_ = rhs.worker_;
-				return *this;
-			}
 			
-			template <
-				typename F,
-				typename R = std::invoke_result_t<F, worker_handle&>>
-				requires ForkJoinTask<F>
-				[[nodiscard]] future_t<R> run_later(F&& func) const
-			{
-				if (worker_->etor_.is_done()) {
-					return future_t<R>();
-				}
-				auto t = make_task<F, R>(std::forward<F>(f));
-				auto fut = t.get_future();
-				worker_->enqueue(task_wrapper{ std::move(t) });
-				return fut;
-			}
-			template <
-				typename F,
-				typename R = std::invoke_result_t<F, worker_handle&>,
-				std::enable_if_t<std::is_base_of_v<runnable_base<F>, F>> = 0>
-				[[nodiscard]] future_t<R> run_next(F&& func) const
-			{
-				if (worker_->etor_.is_done()) {
-					return future_t<R>();
-				}
-				auto t = make_task<F, R>(std::forward<F>(f));
-				auto fut = t.get_future();				;
-				worker_->push_stack(task_wrapper{ std::move(t) });
-				return fut;
-			}
-		}; // end of class worker handle
-	
+	public:				
 		hb_executor(std::size_t parallelism = std::thread::hardware_concurrency())
 		{
+			workers_.reserve(parallelism);
+			threads_.reserve(parallelism);
 			for (auto i = 0u; i < parallelism; ++i) {
 				workers_.emplace_back(*this, i);
-				threads_.emplace_back(thread_main, this);
+				threads_.emplace_back(thread_main, this, i);
 			}
 		}
 		~hb_executor()
@@ -311,13 +344,12 @@ namespace hungbiu
 		hb_executor(const hb_executor&) = delete;
 		hb_executor& operator=(const hb_executor&) = delete;
 
-		template <
-			typename F, 
-			typename R = std::invoke_result_t<F, worker_handle&>>
+		template <typename F, typename R = std::invoke_result_t<F, worker_handle&>>
+		requires std::invocable<F, hb_executor::worker_handle&>
 		[[nodiscard]] future_t<R> submit(F&& func)
 		{
-			if (is_done.load(std::memory_order_acquire)) {
-				return future_t<R>();
+			if (is_done()) {
+				return future_t<R>{};
 			}
 			auto t = make_task<F, R>(std::forward<F>(func));
 			auto fut = t.get_future();
@@ -327,34 +359,6 @@ namespace hungbiu
 		
 	};
 
-	/*
-	* // allocate continuation object
-	* auto cont = h.get_continuation(continuation_func);
-	* 
-	* // fork arbitrary amount of child task if needed
-	* h.summit(cont, task);
-	* 
-	* return;
-	*/
-
-	/*
-	* class continuation
-	* {
-	*     struct ctrl_blk
-	*	  {
-	*         std::atomic<size_t> ref_count_;
-	*         task_wrapper task;
-	*     };
-	*     std::shared_ptr<ctrl_blk> ctrl_;
-	* public:
-	*	  task_wrapper add_child(F&& func)
-	*     {
-	*         ctrl_->ref_count_.fetch_add(1);
-	*		  return task_wrapper {
-	*		  [&](F&& func) {
-	*		      func();
-	*			  
-	*     }
-	* };
-	*/
+	template <typename F>
+	concept is_hb_task = std::invocable<F, hb_executor::worker_handle&>;
 }

@@ -1,4 +1,5 @@
 #pragma once
+#if PAPSO_TEST
 #include "papso_test.h"
 #include <cstdio>
 #include <cmath>
@@ -39,3 +40,4 @@ void hungbiu_pso_test()
 	benchmark<30>(rosenbrock, -2.048, 2.048, "rosenbrock");
 	benchmark<30>(griewank, -600., 600., "griewank");
 }
+#endif

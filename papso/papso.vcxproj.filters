@@ -27,10 +27,19 @@
     <ClInclude Include="papso_test.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="discreate_papso.h">
+    <ClInclude Include="discrete_particle.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="discrete_particle.h">
+    <ClInclude Include="discrete_particle_test.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="discrete_papso.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="tsp.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="tsp_data.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -21,8 +21,23 @@ namespace hungbiu
 	public:
 		concurrent_std_deque() = default;
 		~concurrent_std_deque() = default;
-		concurrent_std_deque(const concurrent_std_deque&) = delete;
-		concurrent_std_deque& operator=(const concurrent_std_deque&) = delete;
+		concurrent_std_deque(concurrent_std_deque&& oth) noexcept 
+		{
+			std::lock_guard lg{ oth.lock_ };
+			deque_ = std::move(oth.deque_);
+			pop_count_ = oth.pop_count_.load();
+			oth.pop_count_.store(0);
+		}
+		concurrent_std_deque& operator=(concurrent_std_deque&& rhs) noexcept
+		{
+			if (this != &rhs) {
+				std::scoped_lock slk{ lock_, rhs.lock_ };
+				deque_ = std::move(rhs.deque_);
+				pop_count_ = rhs.pop_count_.load();
+				rhs.pop_count_.store(0);
+			}
+			return *this;
+		}
 
 		void push_back(T& v)
 		{
@@ -54,20 +69,24 @@ namespace hungbiu
 		}
 		[[nodiscard]] bool try_push_front(T& v)
 		{
-			if (!lock_.try_lock()) return false;
-			std::lock_guard lg{ lock_, std::adopt_lock };
-			deque_.emplace_front(std::move(v));
-			return true;
+			if (lock_.try_lock()) {
+				std::lock_guard lg{ lock_, std::adopt_lock };
+				deque_.emplace_front(std::move(v));
+				return true;
+			}
+			return false;
 		}
 		[[nodiscard]] bool try_pop_front(T& v) noexcept
 		{
-			if (!lock_.try_lock()) return false;
-			std::lock_guard lg{ lock_, std::adopt_lock };
-			if (deque_.empty()) return false;
-			v = std::move(deque_.front());
-			deque_.pop_front();
-			shrink_if_needed();
-			return true;
+			if (lock_.try_lock()) {
+				std::lock_guard lg{ lock_, std::adopt_lock };
+				if (deque_.empty()) return false;
+				v = std::move(deque_.front());
+				deque_.pop_front();
+				shrink_if_needed();
+				return true;
+			}			
+			return false;
 		}
 	};
 }

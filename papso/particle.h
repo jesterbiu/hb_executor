@@ -13,13 +13,13 @@
 template <size_t D>
 struct ALIGN_REQ particle
 {
-	using cont_t = std::array<double, D>;
+	using vec_t = std::array<double, D>;
 	using lock_t = std::mutex;
 
 	std::mutex mtx;
 	std::atomic<double> best_fitness{ std::numeric_limits<double>::max() };
 	std::atomic<double> fitness{ std::numeric_limits<double>::max() };
-	cont_t velocity, position, best_position;
+	vec_t velocity, position, best_position;
 };
 
 // position

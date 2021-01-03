@@ -1,9 +1,7 @@
-#include "task.h"
+#include "executor_test.h"
 using namespace std;
-using namespace hungbiu;
-
 
 int main()
 {
-	
+	executor_test();
 }

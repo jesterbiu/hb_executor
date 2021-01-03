@@ -116,7 +116,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -142,11 +142,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="canonical_rng.h" />
-    <ClInclude Include="discreate_papso.h" />
+    <ClInclude Include="discrete_papso.h" />
     <ClInclude Include="discrete_particle.h" />
+    <ClInclude Include="discrete_particle_test.h" />
     <ClInclude Include="papso.h" />
     <ClInclude Include="papso_test.h" />
     <ClInclude Include="particle.h" />
+    <ClInclude Include="tsp.h" />
+    <ClInclude Include="tsp_data.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
