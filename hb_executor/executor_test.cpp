@@ -4,10 +4,10 @@
 #include <iostream>
 #include <mutex>
 using namespace hungbiu;
-
-std::mutex global_mtx;
+std::mutex gmtx;
 struct fib_calc
 {
+	static constexpr int FIB_LOWER[] = { 0, 1, 1 };
 
 	// Data member
 	int n;
@@ -26,17 +26,10 @@ struct fib_calc
 		if (n > 2) {
 			auto fut_1 = h.submit(fib_calc{ n - 1 });
 			auto fut_2 = h.submit(fib_calc{ n - 2 });
-			int n_1 = h.get(fut_1);
-			int n_2 = h.get(fut_2);
-			
-			std::lock_guard lg{ global_mtx };
-			std::cout << "fib(" << n - 1 << ") = " << n_1 << '\n';
-			std::cout << "fib(" << n - 1 << ") = " << n_2 << '\n';
-
-			return n_1 + n_2;
+			return h.get(fut_1) + h.get(fut_2);	
 		}
 		else {
-			return n;
+			return FIB_LOWER[n];
 		}
 	}
 };
@@ -44,18 +37,23 @@ struct fib_calc
 void executor_test()
 {
 	static constexpr std::pair<int, int> FIB_TAB[] = {
+		{6, 8},
+		{10, 55},
 		{20, 6765},
 		{30, 832040},
 		{40, 102334155}
 	};
 
-	hb_executor e{2};
-	for (auto& fib : FIB_TAB) {
-		auto fut = e.submit(fib_calc{ fib.first });
-
-		// BOOM!!!
-		const int result = fut.get();
-
-		assert(result == fib.second);
+	hb_executor e{4};
+	for (auto& f : FIB_TAB) {
+		auto fut = e.submit(fib_calc{ f.first });
+		try {
+			assert(fut.get() == f.second);
+			std::cout << "fib(" << f.first << ") succeed\n";
+		}
+		catch (std::exception& e) {
+			std::cout << e.what() << '\n';
+		}
 	}	
+	e.done();
 }

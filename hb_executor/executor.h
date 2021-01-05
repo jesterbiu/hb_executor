@@ -58,9 +58,6 @@ namespace hungbiu
 						ptr_worker_->_steal(tw)) {
 						tw.run(*this);
 					}
-					else {
-						throw "No pending future!";
-					}
 				}
 				return fut.get();
 			}
