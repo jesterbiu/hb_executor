@@ -8,7 +8,7 @@
 #include <cassert>
 #include <concepts>
 #include "concurrent_std_deque.h"
-#include "../../concurrent_data_structures/concurrent_data_structures/array_blocking_queue.h"
+
 namespace hungbiu
 {	
 	class hb_executor
@@ -18,14 +18,7 @@ namespace hungbiu
 		using promise_t = std::promise<T>;
 		template <typename T>
 		using future_t = std::future<T>;
-		template <typename T>
-
-		friend bool future_ready(std::future<T>& fut)
-		{
-			auto status = fut.wait_for( std::chrono::nanoseconds{1} );
-			return std::future_status::ready == status;
-		}
-		
+				
 		// --------------------------------------------------------------------------------
 		// worker_handler
 		// used by task object to submit work
@@ -46,33 +39,49 @@ namespace hungbiu
 				if (this != &rhs) ptr_worker_ = rhs.ptr_worker_;
 				return *this;
 			}
+						 
+			template <typename T>
+			static bool future_ready(const std::future<T>& fut)
+			{
+				assert(fut.valid());
+				const auto status = fut.wait_for(std::chrono::nanoseconds{ 0 });
+				return std::future_status::ready == status;
+			}
 
-			// Enqueue
+			// Suspend current task to execute others
+			template <typename R>
+			R get(future_t<R>& fut)
+			{
+				while (!future_ready(fut)) {					
+					task_wrapper tw{};
+					if (ptr_worker_->_pop(tw) || 
+						ptr_worker_->_steal(tw)) {
+						tw.run(*this);
+					}
+					else {
+						throw "No pending future!";
+					}
+				}
+				return fut.get();
+			}
+
+			// Push a forked task onto stack
 			template <typename F, typename R = std::invoke_result_t<F, worker_handle&>>
 			requires std::invocable<F, hb_executor::worker_handle&>
-				[[nodiscard]] future_t<R> run_later(F&& func) const
+			[[nodiscard]] future_t<R> submit(F&& func) const
 			{
-				if (ptr_worker_->etor_.is_done()) {
-					return future_t<R>();
-				}
 				auto t = make_task<F, R>(std::forward<F>(func));
 				auto fut = t.get_future();
-				ptr_worker_->enqueue(task_wrapper{ std::move(t) });
+//				ptr_worker_->_push(task_wrapper{ std::move(t) });
+				ptr_worker_->_push( std::move(t) );
 				return fut;
 			}
 
-			// Push stack
 			template <typename F, typename R = std::invoke_result_t<F, worker_handle&>>
 			requires std::invocable<F, hb_executor::worker_handle&>
-				[[nodiscard]] future_t<R> run_next(F&& func) const
-			{
-				if (ptr_worker_->etor_->is_done()) {
-					return future_t<R>();
-				}
-				auto t = make_task<F, R>(std::forward<F>(func));
-				auto fut = t.get_future(); ;
-				ptr_worker_->push_stack(task_wrapper{ std::move(t) });
-				return fut;
+			R invoke(F&& func) const
+			{				
+				return func(*this);
 			}
 		}; // end of class worker handle
 
@@ -129,14 +138,10 @@ namespace hungbiu
 			std::unique_ptr<task_wrapper_concept> p_task_;
 		public:
 			task_wrapper() : p_task_(nullptr) {}
-			template <typename R>
-			task_wrapper(task_t<R>&& t)
+			template <typename T>
+			task_wrapper(T&& t)
 			{
-				using model_t = task_wrapper_model<task_t<R>>;
-				static_assert(std::is_base_of_v<task_wrapper_concept, model_t>, 
-							  "task_wrapper_concept is not base class of model_t!\n");
-				static_assert(std::is_convertible_v<model_t*, task_wrapper_concept*>,
-							  "model_t* can't be converted to task_wrapper_concept*!\n");
+				using model_t = task_wrapper_model<T>;
 				p_task_ = std::make_unique<model_t>(std::move(t));
 			}
 			task_wrapper(task_wrapper&& oth) noexcept :
@@ -172,27 +177,27 @@ namespace hungbiu
 		{
 			friend class worker_handle;
 			template <typename T>
-			using queue_t = array_blocking_queue<T>;
-			template <typename T>
 			using deque_t = concurrent_std_deque<T>;
 
 			std::atomic<bool> associated_{ false };
 			hb_executor* etor_;
-			const std::size_t index_;
+			std::size_t index_;
 			deque_t<task_wrapper> run_stack_;
 				
-			void push_stack(task_wrapper tw)
+			// Push a forked task onto stack
+			void _push(task_wrapper tw)
 			{
 				run_stack_.push_back(tw);
 			}
-			[[nodiscard]] bool pop_stack(task_wrapper& tw) noexcept
+			// Pop a task from stack for the worker itself to execute
+			[[nodiscard]] bool _pop(task_wrapper& tw) noexcept
 			{
 				return run_stack_.pop_back(tw);
 			}
-			void enqueue(task_wrapper tw)
+			[[nodiscard]] bool _steal(task_wrapper& tw)
 			{
-				run_stack_.push_front(tw);
-			}			
+				return etor_->steal(tw, index_);
+			}
 		public:
 			//static constexpr auto RUN_QUEUE_SIZE = 256u;
 			worker(hb_executor& etor, std::size_t idx) :
@@ -218,7 +223,7 @@ namespace hungbiu
 				task_wrapper tw;
 				while (!etor_->is_done()) {
 					// get work from local stack 
-					if (pop_stack(tw)) {
+					if (_pop(tw)) {
 						tw.run(h);
 						continue;
 					}
@@ -262,7 +267,10 @@ namespace hungbiu
 				}
 			}
 		}
-
+		
+		// --------------------------------------------------------------------------------
+		// Data members of executor
+		// --------------------------------------------------------------------------------
 		mutable std::atomic<bool> is_done_{ false };
 		std::vector<worker> workers_;
 		std::vector<std::thread> threads_;
@@ -353,7 +361,8 @@ namespace hungbiu
 			}
 			auto t = make_task<F, R>(std::forward<F>(func));
 			auto fut = t.get_future();
-			dispatch(task_wrapper{ std::move(t) });
+			//dispatch(task_wrapper{ std::move(t) });
+			dispatch( std::move(t) );
 			return fut;
 		}
 		

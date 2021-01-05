@@ -1,9 +1,14 @@
 #include "executor_test.h"
 #include <cassert>
 #include <vector>
+#include <iostream>
+#include <mutex>
 using namespace hungbiu;
+
+std::mutex global_mtx;
 struct fib_calc
 {
+
 	// Data member
 	int n;
 
@@ -19,9 +24,16 @@ struct fib_calc
 	int operator()(hb_executor::worker_handle& h)
 	{
 		if (n > 2) {
-			auto fut_1 = h.run_next(fib_calc{ n - 1 });
-			auto fut_2 = h.run_next(fib_calc{ n - 2 });
-			return fut_1.get() + fut_2.get();
+			auto fut_1 = h.submit(fib_calc{ n - 1 });
+			auto fut_2 = h.submit(fib_calc{ n - 2 });
+			int n_1 = h.get(fut_1);
+			int n_2 = h.get(fut_2);
+			
+			std::lock_guard lg{ global_mtx };
+			std::cout << "fib(" << n - 1 << ") = " << n_1 << '\n';
+			std::cout << "fib(" << n - 1 << ") = " << n_2 << '\n';
+
+			return n_1 + n_2;
 		}
 		else {
 			return n;
@@ -40,6 +52,10 @@ void executor_test()
 	hb_executor e{2};
 	for (auto& fib : FIB_TAB) {
 		auto fut = e.submit(fib_calc{ fib.first });
-		assert(fut.get() == fib.second);
+
+		// BOOM!!!
+		const int result = fut.get();
+
+		assert(result == fib.second);
 	}	
 }
