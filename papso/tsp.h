@@ -55,20 +55,33 @@ void transform_coord_format(const std::string& fname)
 using coord = std::pair<double, double>;
 double tsp(const std::vector<int>& pos, const coord* map)
 {
-	auto distance = [](const coord& c1, const coord& c2) {
-		return std::sqrt(std::pow(c1.first - c2.first,  2) + std::pow(c1.second - c2.second, 2));
-	};
+	
 	
 	const auto size = pos.size() + 1; // 1 more element for trip back to the start point
 	std::vector<double> diff_vec(size);
 
 	// Calculate length of the route
+	auto distance = [](const coord& c1, const coord& c2) {
+		return std::sqrt(std::pow(c1.first - c2.first,  2) + std::pow(c1.second - c2.second, 2));
+	};
 	std::adjacent_difference(pos.cbegin(), pos.cend(), diff_vec.begin(),
 		[&](auto p2, auto p1) { return distance(map[p2], map[p1]); });	
 	
 	// The length going back to start point
-	diff_vec[size - 1] = distance(map[pos.front()], map[pos.back()]);
+	diff_vec.back() = distance(map[pos.front()], map[pos.back()]);
 
 	// Skip the first element
 	return std::accumulate(diff_vec.cbegin() + 1, diff_vec.cend(), 0.); 
 }
+
+struct tsp_solve
+{
+	const coord* m_map;
+
+	tsp_solve(const coord* ptr_map) : m_map(ptr_map) {}
+	int operator()(const discrete_particle::position_type& input)
+	{
+		// Implicityly convert float point to integer
+		return static_cast<int>(tsp(input, m_map));
+	}
+};

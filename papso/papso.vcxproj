@@ -150,6 +150,7 @@
     <ClInclude Include="particle.h" />
     <ClInclude Include="tsp.h" />
     <ClInclude Include="tsp_data.h" />
+    <ClInclude Include="tsp_test.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />

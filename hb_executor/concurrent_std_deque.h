@@ -69,24 +69,20 @@ namespace hungbiu
 		}
 		[[nodiscard]] bool try_push_front(T& v)
 		{
-			if (lock_.try_lock()) {
-				std::lock_guard lg{ lock_, std::adopt_lock };
-				deque_.emplace_front(std::move(v));
-				return true;
-			}
-			return false;
+			std::unique_lock ul{ lock_, std::try_to_lock };
+			if (!ul.owns_lock()) return false;
+			deque_.emplace_front(std::move(v));
+			return true;
 		}
 		[[nodiscard]] bool try_pop_front(T& v) noexcept
 		{
-			if (lock_.try_lock()) {
-				std::lock_guard lg{ lock_, std::adopt_lock };
-				if (deque_.empty()) return false;
-				v = std::move(deque_.front());
-				deque_.pop_front();
-				shrink_if_needed();
-				return true;
-			}			
-			return false;
+			std::unique_lock ul{ lock_, std::try_to_lock };
+			if (!ul.owns_lock()) return false;
+			if (deque_.empty()) return false;
+			v = std::move(deque_.front());
+			deque_.pop_front();
+			shrink_if_needed();
+			return true;
 		}
 	};
 }
