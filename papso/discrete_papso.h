@@ -247,9 +247,7 @@ private:
 					update_position(p, gbest);
 					evaluate_particle(p);
 					//printf_s("%llu[%llu]: %d\n", itr, idx, p.m_fitness.load());
-				} // end of per-particle loop
-
-				
+				} // end of per-particle loop				
 			} // end of per-iteration loop
 
 		}

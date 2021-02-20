@@ -54,7 +54,7 @@ void run_tsp_pso(size_t i)
 		params[i].Iteration,
 		best_fit);
 }
-void tsp_pso_test()
+void tsp_pso_test_loop()
 {
 	for (auto i = 0u; i < sizeof(params) / sizeof(pso_params); ++i) {
 		run_tsp_pso(i);

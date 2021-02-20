@@ -45,6 +45,9 @@
     <ClInclude Include="tsp_test.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="alt_dpso_tsp.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">

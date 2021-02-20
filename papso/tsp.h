@@ -1,4 +1,7 @@
+// Codes in this header has been tested!
+
 #pragma once
+
 #include <fstream>
 #include <string>
 #include <cassert>
@@ -6,6 +9,8 @@
 #include <numeric>
 #include <cmath>
 #include <cstdio>
+
+using coord = std::pair<double, double>;
 
 std::vector<std::string> split(const std::string& str, char spliter)
 {
@@ -52,11 +57,8 @@ void transform_coord_format(const std::string& fname)
 	}			
 }
 
-using coord = std::pair<double, double>;
 double tsp(const std::vector<int>& pos, const coord* map)
 {
-	
-	
 	const auto size = pos.size() + 1; // 1 more element for trip back to the start point
 	std::vector<double> diff_vec(size);
 

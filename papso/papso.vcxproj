@@ -141,6 +141,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="alt_dpso_tsp.h" />
     <ClInclude Include="canonical_rng.h" />
     <ClInclude Include="discrete_papso.h" />
     <ClInclude Include="discrete_particle.h" />

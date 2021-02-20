@@ -11,6 +11,7 @@
 #include <cassert>
 #include "../../concurrent_data_structures/concurrent_data_structures/spinlock.h"
 
+
 // --------------------------------------------------------------------------------
 // Particle definition
 // --------------------------------------------------------------------------------
@@ -139,16 +140,28 @@ struct dpso_velocity_multiplies_perm
 
 	velocity_type operator()(double r, const velocity_type& vel) const
 	{
-		assert(0 <= r && r <= 1);
-		const auto size_truncated = r * static_cast<double>(vel.size());
-		return { vel.cbegin(), vel.cbegin() + static_cast<size_t>(size_truncated) };
+		velocity_type ret = vel;
+		multiplies(r, ret);
+		return ret;
 	}
 	velocity_type operator()(double r, velocity_type&& vel) const
 	{
-		assert(0 <= r && r <= 1);
-		const auto size_truncated = r * static_cast<double>(vel.size());
-		vel.resize(static_cast<size_t>(size_truncated));
-		return vel;
+		multiplies(r, vel);
+		return vel;		
+	}
+
+private:	
+	void multiplies(double r, velocity_type& vel) const {
+		size_t trunc_size = static_cast<size_t>(
+			(r > 1.0 ? (r - 1.0) : r) * static_cast<double>(vel.size())
+		);
+
+		if (r > 1) {
+			vel.insert(vel.cend(), vel.cbegin(), vel.cbegin() + trunc_size);
+		}
+		else { // 0 <= r <= 1
+			vel.resize(trunc_size);
+		}
 	}
 };
 
@@ -173,5 +186,18 @@ struct dpso_position_plus_perm
 			std::swap(pos[v.first], pos[v.second]);
 		}
 		return pos;
+	}
+};
+
+struct dpso_velocity_plus_perm {
+	using particle_t = discrete_particle;
+	using velocity_type = typename particle_t::velocity_type;
+
+	velocity_type operator()(const velocity_type& lhs, const velocity_type& rhs) const {
+		velocity_type vel;
+		vel.reserve(lhs.size() + rhs.size());
+		vel.insert(vel.cend(), lhs.cbegin(), lhs.cend());
+		vel.insert(vel.cend(), rhs.cbegin(), rhs.cend());
+		return vel;
 	}
 };

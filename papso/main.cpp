@@ -1,8 +1,9 @@
 #include "discrete_particle_test.h"
 #include "tsp_test.h"
-int main()
-{
-	tsp_pso_test();
+#include <random>
+
+int main() {
+	tsp_pso_test_loop();
 }
 
 
