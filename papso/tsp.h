@@ -29,7 +29,9 @@ std::vector<std::string> split(const std::string& str, char spliter)
 		}
 
 		// Split and store and substring
-		vs.push_back(std::string(i1, i2));
+		if (i1 != i2) {
+			vs.push_back(std::string(i1, i2));
+		}
 
 		if (i2 != str.cend())
 			i1 = i2;		// Continue
@@ -51,6 +53,9 @@ void transform_coord_format(const std::string& fname)
 	while (!ifs.eof()) {
 		std::getline(ifs, buf);
 		auto strvec = split(buf, ' ');
+		if (strvec.size() < 3) {
+			continue;
+		}
 		strvec[1] = "{ " + strvec[1] + ", ";
 		strvec[2] += " },\n";
 		for (auto i = 1u; i < strvec.size(); ++i) ofs << strvec[i];
