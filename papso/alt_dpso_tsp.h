@@ -154,7 +154,10 @@ class alt_dpso_tsp {
 		for (size_t i = 0; i < swarm_sz_; ++i) {
 			particle_t& p = particles_[i];
 
-			// For each particle, try to move it 
+			// Go back to personal best
+			p.m_position = p.m_best_position;
+
+			// Try to move it 
 			// to a better position within given steps
 			for (int j = 0; j < max_steps; ++j) {
 				// Move slowly by |v| == 1
@@ -169,7 +172,7 @@ class alt_dpso_tsp {
 
 				// Update position
 				// Go back to personal best and move
-				p.m_position = pos_plus(p.m_best_position, rand_vel);
+				p.m_position = pos_plus(std::move(p.m_position), rand_vel);
 				
 				// Evaluate
 				if (evaluate(p)) {
@@ -194,7 +197,10 @@ class alt_dpso_tsp {
 		for (size_t i = 0; i < swarm_sz_; ++i) {
 			particle_t& p = particles_[i];
 
-			// For each particle, try to move it 
+			// Go back to personal best
+			p.m_position = p.m_best_position;
+
+			// Try to move it 
 			// to a better position within given steps
 			for (int j = 0; j < max_steps; ++j) {
 				// Move slowly by |v| == 1
@@ -208,11 +214,9 @@ class alt_dpso_tsp {
 				velocity_type rand_vel = { {first, second} };
 
 				// Update position
-				// Go back to personal best and move
-				p.m_position = pos_plus(p.m_best_position, rand_vel);
+				p.m_position = pos_plus(std::move(p.m_position), rand_vel);
 
-				// Evaluate
-				
+				// Evaluate				
 				if (evaluate(p)) {
 					gbest_improved = update_gbest(p);
 
@@ -241,14 +245,11 @@ class alt_dpso_tsp {
 			double best_f = std::numeric_limits<double>::max();
 			velocity_type best_vel(1); // 1 distance
 
-			position_type pos(p.m_position.size());
-			velocity_type vel(1); // 1 distance
-
 			// Every position
 			for (size_t first = 0; first < dimension_ - 1; ++first) {
 				for (size_t second = first + 1; second < dimension_; ++second) {
-					vel[0] = { first, second };
-					pos = pos_plus(p.m_position, vel);
+					velocity_type vel = { { first, second } };
+					position_type pos = pos_plus(p.m_position, vel);
 					
 					double f = object_func_(pos);
 
@@ -269,6 +270,7 @@ class alt_dpso_tsp {
 		}
 		return false;
 	}
+
 public:
 	alt_dpso_tsp(size_t ssz = 32, size_t isz = 200, size_t nbsz = 4) :
 		swarm_sz_(ssz)
@@ -288,9 +290,21 @@ public:
 			throw std::exception{ "can't open log file!\n" };
 		}
 		fprintf(fp, "\n\niteration\tbest results\tgbest\n");
-#endif
-		size_t last_improved = 0;
-		for (size_t i = 0; i < iteration_sz_; ++i) {
+#endif		
+		size_t LDM_thresh = 2;				// no rehope: [0, 1]
+											// ldm: [2, 3]
+		size_t EDM_thresh = LDM_thresh + 2; // edm: [4, ...]		
+		size_t last_improved = 0;		
+		size_t i = 0; // For iteration
+		auto update_thresh = [&](bool improved) {
+			if (improved) {
+				last_improved = i;
+				LDM_thresh = i + 2;
+				EDM_thresh = LDM_thresh + 2;
+			}
+		};
+
+		for (; i < iteration_sz_; ++i) {
 			for (size_t j = 0; j < swarm_sz_; ++j) {
 				// Update velocity
 				update_velocity(j);
@@ -316,19 +330,20 @@ public:
 #endif
 			} // end of evaluation loop
 
-			if (improved) {
-				continue;
+			if (i < LDM_thresh) {
+				// No rehope
 			}
-
-			// Fallback options if no improvement
-			// LDM
-
+			else if (i < EDM_thresh) { // LDM	
+				improved = rehope_lazy_descent_method();				
+			}	
+			else if (EDM_thresh <= i) { // EDM
+				improved = rehope_energetic_descent_method();
+			}
+			else { // LIL				
+				//improved = rehope_local_iterative_levelling();				
+			}
 			
-			// EDM
-			
-			// LIL
-			
-			// Reinitialize
+			update_thresh(improved);
 
 #if PRINT_FOR_TEST
 			const auto& p0 = particles_[0];
