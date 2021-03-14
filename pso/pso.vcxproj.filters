@@ -48,9 +48,6 @@
     <ClInclude Include="kkentzo_test.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="papso.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="particle.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>

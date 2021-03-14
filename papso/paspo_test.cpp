@@ -1,4 +1,5 @@
 #pragma once
+#define PAPSO_TEST 1
 #if PAPSO_TEST
 #include "papso_test.h"
 #include <cstdio>

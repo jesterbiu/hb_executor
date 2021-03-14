@@ -1,5 +1,5 @@
 /*
-* A Parallel Asynchronous Standard PSO Implementations
+* A Parallel Asynchronous PSO Implementations
 */
 #pragma once
 #include <random>

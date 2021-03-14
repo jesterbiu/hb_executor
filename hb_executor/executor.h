@@ -181,7 +181,7 @@ namespace hungbiu
 			}
 			static void _run(void* p, worker_handle& h)
 			{
-				auto pt = static_cast<task_wrapper_model_sso*>(p)->ptask_;
+				auto pt = static_cast<task_wrapper_model_sso*>(p)->ptask_.get();
 				if (pt) std::invoke(*pt, h);
 			}
 			static constexpr task_wrapper_concept_sso vtable_ = { _destructor, _move, _run };
@@ -286,9 +286,11 @@ namespace hungbiu
 			}
 
 			// Submit a task to current thread, return future to obtain result
-			template <typename F, typename R = std::invoke_result_t<F, worker_handle&>>
+			template <
+				typename F
+				, typename R = std::invoke_result_t<F, worker_handle&> >
 			requires std::invocable<F, hb_executor::worker_handle&>
-				[[nodiscard]] future_t<R> submit(F&& func) const
+				[[nodiscard]] future_t<R> execute_return(F&& func) const
 			{
 				auto t = make_task<F, R>(std::forward<F>(func));
 				auto fut = t.get_future();
@@ -412,7 +414,7 @@ namespace hungbiu
 		std::vector<std::thread> threads_;
 
 	public:
-		bool done() const noexcept
+		bool done() noexcept
 		{
 			bool done = false;
 			return is_done_.compare_exchange_strong(done, true, std::memory_order_acq_rel);
@@ -490,7 +492,7 @@ namespace hungbiu
 
 		template <typename F, typename R = std::invoke_result_t<F, worker_handle&>>
 		requires std::invocable<F, hb_executor::worker_handle&>
-		[[nodiscard]] future_t<R> submit(F&& func)
+		[[nodiscard]] future_t<R> execute_return(F&& func)
 		{
 			if (is_done()) {
 				return future_t<R>{};
@@ -504,7 +506,7 @@ namespace hungbiu
 		// Submit a task to current thread and doesn't return result
 		template <typename F>
 		requires std::invocable<F, hb_executor::worker_handle&>
-		void execute(F&& func) const
+		void execute(F&& func)
 		{
 			if (is_done()) { return; }
 			dispatch( std::forward<F>(func) );

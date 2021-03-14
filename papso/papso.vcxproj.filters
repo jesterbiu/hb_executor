@@ -48,6 +48,18 @@
     <ClInclude Include="alt_dpso_tsp.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="parallel_async_pso.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="spmc_buffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="spmc_buffer_test.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="expression.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -56,5 +68,10 @@
     <ClCompile Include="paspo_test.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="results.txt">
+      <Filter>Header Files</Filter>
+    </Text>
   </ItemGroup>
 </Project>

@@ -1,3 +1,6 @@
+// Discrete PSO for Traveling Salesman Problem
+// Most of the ideas are from Maurcie Clerc's works
+
 #pragma once
 #include <random>
 #include <numeric>
@@ -6,7 +9,7 @@
 #include "discrete_particle.h"
 #include "tsp.h"
 
-#define PRINT_FOR_TEST 1
+#define PRINT_FOR_TEST 0
 
 class alt_dpso_tsp {
 	using particle_t = basic_particle<double, std::pair<size_t, size_t>, int>;
@@ -279,6 +282,7 @@ public:
 		, particles_(swarm_sz_) { }
 	
 	int evolve(const coord* map, size_t sz, position_type& best_pos) {
+		// Initialization
 		dimension_ = sz;
 		object_func_ = std::bind(tsp, std::placeholders::_1, map);
 		initialize_swarm();
@@ -291,11 +295,13 @@ public:
 		}
 		fprintf(fp, "\n\niteration\tbest results\tgbest\n");
 #endif		
-		size_t LDM_thresh = 2;				// no rehope: [0, 1]
-											// ldm: [2, 3]
-		size_t EDM_thresh = LDM_thresh + 2; // edm: [4, ...]		
+		// do nothing:	[0, 1]
+		// LDM:			[2, 3]
+		// EDM:			[4, )
+		size_t LDM_thresh = 2;				
+		size_t EDM_thresh = LDM_thresh + 2; 		
 		size_t last_improved = 0;		
-		size_t i = 0; // For iteration
+		size_t i = 0; // For iteration to be captured by lambda below
 		auto update_thresh = [&](bool improved) {
 			if (improved) {
 				last_improved = i;
@@ -305,13 +311,12 @@ public:
 		};
 
 		for (; i < iteration_sz_; ++i) {
+			// Update each particle's velocity, position
 			for (size_t j = 0; j < swarm_sz_; ++j) {
-				// Update velocity
 				update_velocity(j);
 
-				// Update position
 				update_position(j);
-			} // end of update loop
+			} 
 			
 			// Update fitness
 #if PRINT_FOR_TEST
@@ -328,8 +333,9 @@ public:
 					best_of_iteration = f;
 				}
 #endif
-			} // end of evaluation loop
+			}
 
+			// ReHope if no improvement for a couple of iterations
 			if (i < LDM_thresh) {
 				// No rehope
 			}
@@ -356,7 +362,7 @@ public:
 
 			fprintf(fp, "%llu\t\t%d\t%d\n", i, best_of_iteration, gbest_);
 #endif
-		}
+		} // end of PSO main loop
 
 #if PRINT_FOR_TEST
 		fprintf(fp, "best position:\n");
@@ -367,7 +373,7 @@ public:
 		fprintf(fp, "\n");
 		fclose(fp);
 #endif
-
+		// Return results
 		best_pos = gbest_p_->m_best_position;
 		return std::exchange(gbest_, std::numeric_limits<int>::max());
 	}

@@ -26,7 +26,8 @@ namespace kkentzo
 		{
 			ps->goal = 1e-5;
 			ps->size = 40;
-			ps->nhood_strategy = PSO_NHOOD_GLOBAL;
+			ps->steps = 10000;
+			ps->nhood_strategy = PSO_NHOOD_RING;
 			ps->w_strategy = PSO_W_CONST;
 		}
 		// Data members

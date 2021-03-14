@@ -36,7 +36,7 @@ struct alignas(64) basic_particle
 
 	lock_type m_mtx;
 	std::atomic<V> m_best_fitness{ std::numeric_limits<V>::max() };
-	std::atomic<V> m_fitness{ std::numeric_limits<V>::max() };
+	std::atomic<V> fitness{ std::numeric_limits<V>::max() };
 	velocity_type m_velocity;
 	position_type m_position;
 	position_type m_best_position;
