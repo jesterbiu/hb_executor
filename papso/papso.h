@@ -9,9 +9,12 @@
 #include "canonical_rng.h"
 #include "../hb_executor/executor.h"
 
+
+using object_function_type = double(*)(iter, iter);
+
 template <
 	size_t Dimension, 
-	size_t Iteration = 10000u,	
+	size_t Iteration = 1000u,	
 	size_t NeighborSize = 12u, 
 	size_t SwarmSize = 40u
 >
@@ -19,7 +22,8 @@ struct par_async_dpso
 {
 	using particle_t = particle<Dimension>;	
 
-	double(*m_object_function)(const double*, size_t);
+	using iter = std::vector<double>::const_iterator;
+	object_function_type m_object_function;
 	const double m_goal;
 	const double m_Xmin; const double m_Xmax;
 	canonical_rng m_rng;
@@ -143,7 +147,7 @@ struct par_async_dpso
 		}
 		void evaluate_particle(particle_t& p) // may update global
 		{
-			const auto fitness = m_parent->m_object_function(p.position.data(), Dimension);
+			const auto fitness = m_parent->m_object_function(p.cbegin(), p.cend());
 			p.fitness.store(fitness);
 			if (fitness < p.best_fitness.load()) {
 				// Update personal best
@@ -176,7 +180,7 @@ struct par_async_dpso
 		}
 	};
 	
-	par_async_dpso(double(*object_function)(const double*, size_t), double goal, double Xmin, double Xmax) :
+	par_async_dpso(object_function_type object_function, double goal, double Xmin, double Xmax) :
 		m_object_function(object_function), m_goal(goal), m_Xmin(Xmin), m_Xmax(Xmax),
 		m_particles(SwarmSize){}
 	bool operator()(double best_fitness, std::vector<double>& best_position)

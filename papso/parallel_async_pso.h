@@ -16,8 +16,10 @@
 #include <condition_variable>
 #include "spmc_buffer.h"
 #include "expression.h"
+#include "canonical_rng.h"
 #include "../hb_executor/executor.h"
-#define PRINT 1
+#define PRINT
+#undef PRINT
 #ifdef PRINT
 #include <cstdio>
 #endif
@@ -81,14 +83,14 @@ namespace hungbiu {
 	struct alignas(64) atomic_aligned_wrapper {
 		std::atomic<T> val;
 
-		atomic_aligned_wrapper() : val() {}
+		atomic_aligned_wrapper(T desired = 0) : val(desired) {}
 		atomic_aligned_wrapper(atomic_aligned_wrapper&& oth) noexcept : 
 			val(oth.val.exchange(0, std::memory_order_acq_rel)) {}
 		~atomic_aligned_wrapper() {}
 	};
 
 	// Storage for PAPSO states
-	template <template<typename> typename BufferT>
+	template <template<typename> typename BufferT >
 	struct pso_state {
 		// Defaultable settings
 		size_t iteration = 100;
@@ -105,7 +107,7 @@ namespace hungbiu {
 		using particle_type = basic_particle<double, double, double>;
 		using aligend_value = atomic_aligned_wrapper<double>;
 		using buffer_type = BufferT<particle_type::position_type>;
-		using rng_type = std::default_random_engine;
+		using rng_type = canonical_rng;
 		using aligned_rng = movable_aligned_wrapper<rng_type>;
 
 		std::vector<particle_type> particles = {};
@@ -130,72 +132,71 @@ namespace hungbiu {
 			, object_function(std::forward<F>(f)) {}
 	};
 
-	template <template<typename> typename BufferT = hungbiu::naive_spmc_buffer>
+	template <typename T>
+	auto span_of(std::vector<T>& vec) {
+		return std::span{ vec.front(), vec.back() };
+	}
+
 	class parallel_async_pso {
-		using pso_state_type = pso_state<BufferT>;
+		template <typename T>
+		using buffer_type = naive_spmc_buffer<T>;
+		using pso_state_type = pso_state<buffer_type>;
 		using particle_type = pso_state_type::particle_type;
 		using position_type = particle_type::position_type;
 		using velocity_type = particle_type::velocity_type;
 		using value_type = particle_type::value_type;
-		using buffer_type = pso_state_type::buffer_type;
 		using worker_handle = hungbiu::hb_executor::worker_handle;
 		using rng_type = pso_state_type::rng_type;
 		using aligned_rng = pso_state_type::aligned_rng;
 
-		// Return random real number from [0, 1)
-		static double my_generate_random(rng_type& rng) {
-			return std::generate_canonical<double, std::numeric_limits<double>::digits>(rng);
-		}
-
-		double evaluate(const position_type& pos) const {
-			return state_->object_function(&pos[0], pos.size());
+		// Return true if particle improve from its pbest
+		bool evaluate(size_t idx) const {
+			particle_type& p = state_->particles[idx];
+			p.value = state_->object_function(p.position.data(), p.position.size());
+			return update_pbest(idx);
 		}
 
 		// Return true if particle is new gbest
 		// Alternaltive: Traverse the pbests vector ??
-		bool update_gbest(const particle_type* particle) const noexcept {
-			const double v = particle->value;
-			if (v >= state_->global_best_value.load(std::memory_order_relaxed)) {
-				return false;
-			}
-
-			// Update
-			std::lock_guard guard{ state_->mtx };
-			if (v < state_->global_best_value.load(std::memory_order_relaxed)) { // Double check
-				state_->global_best_value.store(v);
-				state_->global_best_particle = particle;
-			}
+		bool update_global(const particle_type* particle) const noexcept {
+			
 			return true;
 		}
 
 		// Return if there is improvement from previous pbest
 		bool update_pbest(size_t idx) const {
-			particle_type& p = state_->particles[idx];
-			std::atomic<double>& pbest = state_->best_values[idx].val;
-
 			// Return if no improvement
+			std::atomic<double>& pbest = state_->best_values[idx].val;
+			particle_type& p = state_->particles[idx];
+
 			if (p.value >= pbest.load(std::memory_order_acquire)) {
 				return false;
 			}
 
-			// Update
-			p.best_position = p.position;
-			
-			state_->best_positions[idx].put(p.position); // May be contended
+
+			// In-place update
+			p.best_position = p.position; 
+
+			// Publish
 			pbest.store(p.value);
+			// state_->best_positions[idx].put(p.best_position); (parallel only)
 
 			return true;
-		}
+		}		
 
+		// Traverse the neighborhood to find the best neighbor
+		// No special treatment if best neighbor is particle[index] itself
 		auto get_lbest_view(size_t index) const noexcept { // Ring topology
 			size_t swarm_sz = state_->swarm_size;
-			auto& best_vals = state_->best_values;
-			double best_v = best_vals[index].val.load();
 			size_t best_idx = index;
-			for (int i = -1; i < 2; ++i) {
-				// In case (idx - 1) is negative, (... + swarm_sz) 
+			auto& best_vals = state_->best_values;
+			double best_v = best_vals[index].val.load(std::memory_order_acquire);
+
+			const int offset = state_->neighbor_size / 2;
+			for (int i = -offset; i <= offset; ++i) {
+				// In case idx is negative, (... + swarm_sz) 
 				size_t idx = (index + swarm_sz + i) % swarm_sz;
-				double v = best_vals[idx].val.load();
+				double v = best_vals[idx].val.load(std::memory_order_acquire);
 				if (v < best_v) {
 					best_v = v;
 					best_idx = idx;
@@ -204,68 +205,102 @@ namespace hungbiu {
 			return state_->best_positions[best_idx].get();
 		}
 
-		bool is_within_bondary(const position_type& pos) const noexcept {
-			const double min = state_->min_x;
-			const double max = state_->max_x;
-
-			for (auto& x : pos) {
-				if (x < min || x > max) {
-					return false;
-				}
-			}
-			return true;
+		value_type best_value_of(size_t idx) const noexcept {
+			return state_->best_values[idx].val.load(std::memory_order_acquire);
 		}
 
-		void pso_main_loop(size_t beg, size_t end, size_t iteration, rng_type& rng, worker_handle& handle) const {
+		const position_type& get_lbest_unsafe(int idx) const noexcept {
+			const int offset = state_->neighbor_size / 2; // Positive
+			const size_t swarm_size = state_->swarm_size;
+
+			value_type best_v = best_value_of(idx);
+			particle_type* best_ptr = &state_->particles[idx];
+
+			for (int off = idx - offset; off <= idx + offset; ++off) {
+				// `+ swarm_size` in case that `(idx + off) < 0`
+				size_t neighbor_idx = (idx + off + swarm_size) % swarm_size;
+				value_type neighbor_val = best_value_of(neighbor_idx);
+				if (neighbor_val < best_v) {
+					best_v = neighbor_val;
+					best_ptr = &state_->particles[neighbor_idx];
+				}
+			}
+
+			return best_ptr->best_position;
+		}
+		
+		void update_vel_pos(size_t idx, rng_type& rng) const {
 			static constexpr double W = 0.72984;	// Inertia weight
 			static constexpr double Phi = 1.49618;	// Constriction, no need for velocity clamping
 
-			auto& particles = state_->particles;
-			const particle_type* ibest = &particles[0]; // best particle of this iteration
+			const size_t dim = state_->dimension;
+			particle_type& p = state_->particles[idx];
+			const position_type& pbest = p.best_position;
+			const position_type& lbest = get_lbest_unsafe(idx);
+
+			const auto min = state_->min_x;
+			const auto max = state_->max_x;
+
+			for (size_t i = 0; i < dim; ++i) {
+				p.velocity[i] =
+					W * p.velocity[i]
+					+ Phi * rng() * (pbest[i] - p.position[i])
+					+ Phi * rng() * (lbest[i] - p.position[i]);
+				p.position[i] += p.velocity[i];
+
+				// Confinement by
+				// Maurice Clerc, Standard PSO 2006
+				auto& xi = p.position[i];
+				if (min <= xi && xi <= max) {
+					continue;
+				}
+				else if (xi < min) {
+					xi = min;
+				}
+				else if (xi > max) {
+					xi = max;
+				}
+				else {} // nothing
+
+				p.velocity[i] = 0;
+			}
+		}
+
+		void pso_main_loop(size_t beg, size_t end, size_t iteration, rng_type& rng) const {
+			pso_state_type& state = *state_;
 
 			// Calculate
-			static constexpr auto iter_per_task = 100;
-			for (size_t iter = iteration; iter < iteration + iter_per_task; iter++) {
-				for (size_t i = beg; i < end; ++i) { // Update each particle
-					particle_type& p = particles[i];
+			auto iter_per_task = state.iteration; // For canonical version only
 
+			particle_type* ibest = &state.particles.front();
+
+			for (size_t iter = iteration; iter < iteration + iter_per_task; iter++) {
+				for (size_t i = beg; i < end; ++i) {			
+					particle_type& p = state.particles[i];
+					
 					// Evaluation
-					// Applies "let the particle fly" method: does not evaluate particle out of bound, 
-					// wait for it to be drawn back by pbest and lbest
-					if (is_within_bondary(p.position)) {
-						p.value = evaluate(p.position);
-						if (p.value < ibest->value) {
-							ibest = &p;
-						}
-						update_pbest(i);
+					evaluate(i);
+					if (p.value < ibest->value) {
+						ibest = &p;
 					}
 
-					// Update
-					const position_type& pbest = p.best_position;	// Particle's personal best in history
-					auto lbest_view = get_lbest_view(i);			// Best in local ring neighborhood
-					const position_type& lbest = *lbest_view;
 
-					auto next_vel = W * p.velocity
-						+ Phi * my_generate_random(rng) * (pbest - p.position)
-						+ Phi * my_generate_random(rng) * (lbest - p.position);
-					evaluate_expression(p.velocity, next_vel);
-
-					lbest_view.unlock(); // Reduce shared time
-
-					auto next_pos = p.position + p.velocity;
-					evaluate_expression(p.position, next_pos);
+					// Update: velocity, position
+					update_vel_pos(i, rng);
 				}
+
+				// Update gbest after iteration of subswarm [beg, end)
+#ifdef PRINT
+				printf("best of the round: %.6lf\n", ibest->value);
+#endif
+
+				update_global(ibest);
 			}
 
-			// Update gbest after iteration of subswarm [beg, end)
-#ifdef PRINT
-			printf("best of the round: %.6lf\n", ibest->value);
-#endif
-			update_gbest(ibest);
 
 			// Terminate condition
 			if (iteration + iter_per_task < state_->iteration) { // Fork
-				handle.execute( fork_subswarm(beg, end, iteration + iter_per_task, rng) );
+				//handle.execute( fork_subswarm(beg, end, iteration + iter_per_task, rng) );
 			}
 			else { 
 				std::unique_lock ulock{ state_->done_mtx };
@@ -282,99 +317,64 @@ namespace hungbiu {
 		// given the `region_scaling`, forcing the swarm to expand.
 		// 1.0 -> the whole search space, 0.25 -> 1/4 of the search space
 		position_type random_position(rng_type& rng, float region_scaling = 1.0) const {
-			position_type pos(state_->dimension, 0); // Allocation; may throw
-			const double min = state_->min_x;
-			double diff = (state_->max_x - state_->min_x) * region_scaling;
-			
-			for (double& x : pos) {
-				x = min + diff * my_generate_random(rng);				
+			const size_t dim = state_->dimension;
+			position_type pos(dim);
+
+			const auto min = state_->min_x;
+			const auto max = state_->max_x;
+			const auto range = region_scaling * (max - min);
+
+			for (auto& x : pos) {
+				x = min + range * rng();
 			}
+
 			return pos;
 		}
 
 		// Uniform distributed in 1/4 of the search space
-		void initialize_swarm(size_t beg, size_t end, rng_type& rng, worker_handle& handle) const {
-#ifdef PRINT
-			printf("initialize_swarm [%llu, %llu)\n", beg, end);
-#endif
+		void initialize_swarm(size_t beg, size_t end, rng_type& rng) const {
+			const size_t dim = state_->dimension;
 			std::vector<particle_type>& particles = state_->particles;
+
 			for (size_t i = beg; i < end; ++i) {
-				particle_type& particle = particles[i];
+				particle_type& p = particles[i];
 
-				// Init position to random pos
-				particle.position = random_position(rng);
+				// Random position
+				p.position = random_position(rng);
 
-				// Init velocity
-				position_type rand_pos = random_position(rng);
-				auto init_vel = (rand_pos - particle.position) / 2.;
-				particle.velocity.resize(state_->dimension);
-				evaluate_expression(particle.velocity, init_vel);
+				// Random velocity
+				const position_type rand_pos = random_position(rng);
+				p.velocity.resize(dim);
+				for (size_t i = 0; i < dim; ++i) {
+					p.velocity[i] = (rand_pos[i] - p.position[i]) / 2.0;
+				}
 			}
 		}
 
-		// Return a lambda that evolves a subswarm given [beg, end)
-		auto fork_subswarm(size_t beg, size_t end, size_t iteration, rng_type& rng) const noexcept {
-#ifdef PRINT
-			printf("\n**fork_subswarm [%llu, %llu) : %llu**\n"
-				, beg, end, iteration);
-#endif
-			return [this, beg, end, iteration, &rng](worker_handle& handle) {
-				pso_main_loop(beg, end, iteration, rng, handle);
-			};
-		}
+		void entry() const {
+			pso_state_type& state = *state_;
 
-		void entry(size_t partition_thresh, worker_handle& handle) const {
 			// Pre-calculation for initializations
-			const size_t swarm_sz = state_->swarm_size;
-			size_t fork_count = swarm_sz / partition_thresh;
-			if (swarm_sz % partition_thresh) {
-				fork_count += 1;
-			}
-			{
-				std::lock_guard guard{ state_->done_mtx };
-				state_->fork_count = fork_count;
-			}
+			const size_t swarm_size = state.swarm_size;
 
 			// Swarm
-			state_->particles.resize(swarm_sz);
+			state.particles.resize(swarm_size);
 
-			// Pbests: values, positions
-			state_->best_values.resize(swarm_sz);
-			for (auto& v : state_->best_values) {
-				v.val = std::numeric_limits<double>::max();
+			// Pbests: values, 
+			// positions (parallel only)
+			state.best_values.reserve(swarm_size);
+			for (size_t i = 0; i < swarm_size; ++i) {
+				state.best_values.emplace_back(std::numeric_limits<double>::max());
 			}
 
-			state_->best_positions.resize(swarm_sz);
-
-			// Rngs for each subswarm	
-			state_->random_number_generators.resize(fork_count);
-
-			// Fork initialization
-			/*static constexpr size_t Init_Partition_Threshold = 40;
-			for (size_t i = Init_Partition_Threshold; i < swarm_size; ) {
-				size_t beg = i;
-				i += Init_Partition_Threshold;
-				size_t end = std::min(swarm_sz, i);
-				handle.execute(initialize_swarm(beg, end, handle);
-			}*/
+			// Rngs for each subswarm (parallel only)
+			std::unique_ptr<rng_type> rng_uptr = std::make_unique<rng_type>();
 
 			// My initialization
-			auto rng = std::make_unique<rng_type>();
-			initialize_swarm(0, swarm_sz, *rng, handle);
-
-			// when_all(initalizations);
+			initialize_swarm(0, swarm_size, *rng_uptr);
 
 			// Fork main loop
-			auto rngs_iter = state_->random_number_generators.begin();
-			for (size_t i = 0; i < swarm_sz; ) {
-				// Range
-				size_t beg = i;
-				i += partition_thresh;
-				size_t end = std::min(swarm_sz, i);
-
-				handle.execute( fork_subswarm(beg, end, 0, rngs_iter->val) );
-				++rngs_iter;
-			}
+			pso_main_loop(0, swarm_size, 0, *rng_uptr);			
 		}
 
 		std::unique_ptr<pso_state_type> state_ = {};
@@ -387,7 +387,7 @@ namespace hungbiu {
 			state_ = std::make_unique<pso_state_type>(std::forward<F>(f), dim, min, max);		
 		}
 		parallel_async_pso(parallel_async_pso&& oth) noexcept :
-			state_(std::move(oth)) {}
+			state_(std::move(oth.state_)) {}
 		~parallel_async_pso() {}
 		parallel_async_pso& operator=(parallel_async_pso&& rhs) noexcept {
 			state_ = std::move(rhs.state_);
@@ -423,28 +423,20 @@ namespace hungbiu {
 		}
 
 		using return_type = std::tuple<double, position_type>;
-		return_type evolve(hungbiu::hb_executor& etor, size_t partition_thresh) {
-			auto f = [this, partition_thresh](worker_handle& handle) {
-				entry(partition_thresh, handle);
-			};
-			etor.execute(f);
-#ifdef PRINT
-			printf("execute(entry)\n");
-#endif
-			// Wait for calculation to complete
-			auto predicate_done = [this]() -> bool {
-				return state_->fork_count != 0
-					&& state_->fork_count == state_->done_count; 
-			};
-			{
-				std::unique_lock ulock(state_->done_mtx);
-				state_->done_cv.wait(ulock, predicate_done);
-
-			}
+		return_type evolve() {			
+			entry();
 			
-			std::lock_guard guard{ state_->mtx };
-			return { state_->global_best_value.load()
-					, std::move(state_->global_best_particle->best_position) };
+			double best = std::numeric_limits<double>::max();
+			particle_type* best_ptr = &state_->particles[0];
+			for (size_t i = 0; i < state_->swarm_size; ++i) {
+				double v = best_value_of(i);
+				if (v < best) {
+					best = v;
+					best_ptr = &state_->particles[i];
+				}
+			}
+			return { best
+					, std::move(best_ptr->best_position) };
 		}
 	};
 }

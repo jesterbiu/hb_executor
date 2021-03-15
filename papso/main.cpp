@@ -1,18 +1,30 @@
 #include <cstdio>
 #include "parallel_async_pso.h"
 #include "papso_test.h"
-int main() {
-	hungbiu::parallel_async_pso papso(rosenbrock, 30, -30, 30);
-	papso.set_iteration(10000);
-	hungbiu::hb_executor etor(4);
-	auto [v, pos] = papso.evolve(etor, 40);
-	etor.done();
 
-	printf("best value: %lf\n", v);
-	printf("best postion:\n");
+template <size_t Dim, size_t NSize, size_t ISize>
+void parallel_async_pso_benchmark(double(*fp)(const double*, size_t), double min, double max, const char* msg) {
+	hungbiu::parallel_async_pso papso(fp, Dim, min, max);
+	papso.set_neighbor_size(NSize);
+	papso.set_iteration(ISize);
+	auto [v, pos] = papso.evolve();
+	printf_s("%s: %lf\n", msg, v);
+	/*printf("best postion: ");
 	for (auto x : pos) {
-		printf("\t%.4lf\n", x);
-	}
+		printf("%.4lf, ", x);
+	}*/
+	printf("\n");
+}
+
+void parallel_async_pso_test() {
+	/*parallel_async_pso_benchmark<30, 4, 1000>(sphere, -100., 100., "sphere");
+	parallel_async_pso_benchmark<30, 4, 1000>(rosenbrock, -30, 30, "rosenbrock");
+	parallel_async_pso_benchmark<30, 4, 1000>(griewank, -600., 600., "griewank");*/
+}
+
+
+int main() {
+	hungbiu_pso_test();
 }
 
 

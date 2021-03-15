@@ -1,11 +1,10 @@
-#include "kkentzo_test.hpp"
+#include "simple_pso_test.hpp"
 #include "test_functions.hpp"
-#include <tuple>
 int main()
 {
-	auto [fitness, pos, duration] = kkentzo::particle_swarm_optimization(pso_rosenbrock, 30, -30, 30)(nullptr);
-	std::cout << "fitness: " << fitness << "\nbest postion: ";
-	for (auto x : pos) {
-		std::cout << x << '\n';
-	}
+	printf_s("\nasync pso\n");
+	benchmark_async<2>(ackley, -100., 100., "ackley");
+	benchmark_async<30>(sphere, -100., 100., "sphere");
+	benchmark_async<30>(rosenbrock, -2.048, 2.048, "rosenbrock");
+	benchmark_async<30>(griewank, -600., 600., "griewank");
 }

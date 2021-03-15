@@ -153,6 +153,7 @@
     <ClInclude Include="particle.h" />
     <ClInclude Include="spmc_buffer.h" />
     <ClInclude Include="spmc_buffer_test.h" />
+    <ClInclude Include="test_functions.h" />
     <ClInclude Include="tsp.h" />
     <ClInclude Include="tsp_data.h" />
     <ClInclude Include="tsp_test.h" />

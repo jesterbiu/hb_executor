@@ -3,6 +3,10 @@
 #include <functional>
 #include <tuple>
 #include <cassert>
+//#define PRINT
+#ifdef PRINT
+#include <iostream>
+#endif 
 
 // Expression templates 
 // for expressive, lazy-evaluation formula calculation
@@ -14,8 +18,15 @@ namespace hungbiu {
 
 	template <typename T>
 	auto at(const T& t, size_t i) {
-		if constexpr (has_subsript<T>) return t[i];
-		else return t;
+		if constexpr (has_subsript<T>) {
+			return t[i];
+		}
+		else {
+#ifdef PRINT
+			std::cout << "at() -> " << t << '\n';
+#endif
+			return t;
+		}
 	}
 
 	template <typename F, typename... Operands>
