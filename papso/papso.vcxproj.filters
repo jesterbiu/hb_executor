@@ -48,9 +48,6 @@
     <ClInclude Include="alt_dpso_tsp.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="parallel_async_pso.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="spmc_buffer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -61,6 +58,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="test_functions.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="papso2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

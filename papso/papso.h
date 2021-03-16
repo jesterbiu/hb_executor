@@ -5,11 +5,12 @@
 #include <random>
 #include <vector>
 #include <mutex>
+#include <cstdio>
 #include "particle.h"
 #include "canonical_rng.h"
 #include "../hb_executor/executor.h"
 
-
+using iter = std::vector<double>::const_iterator;
 using object_function_type = double(*)(iter, iter);
 
 template <
@@ -22,8 +23,7 @@ struct par_async_dpso
 {
 	using particle_t = particle<Dimension>;	
 
-	using iter = std::vector<double>::const_iterator;
-	object_function_type m_object_function;
+	const object_function_type m_object_function;
 	const double m_goal;
 	const double m_Xmin; const double m_Xmax;
 	canonical_rng m_rng;
@@ -38,6 +38,7 @@ struct par_async_dpso
 		};
 
 		particle_t* global_best_particle = &m_particles[0];
+		std::vector<double> pos;
 		for (auto& p : m_particles) {
 			for (size_t i = 0; i < Dimension; ++i) {
 				// Init position to random pos
@@ -51,7 +52,8 @@ struct par_async_dpso
 			}
 
 			// Init fitness
-			const auto fitness = m_object_function(p.position.data(), Dimension);
+			pos.assign(p.position.cbegin(), p.position.cend());
+			const auto fitness = m_object_function(pos.cbegin(), pos.cend());
 			p.fitness.store(fitness);
 			p.best_fitness.store(fitness);
 
@@ -147,7 +149,8 @@ struct par_async_dpso
 		}
 		void evaluate_particle(particle_t& p) // may update global
 		{
-			const auto fitness = m_parent->m_object_function(p.cbegin(), p.cend());
+			std::vector<double> pos(p.position.cbegin(), p.position.cend());
+			const auto fitness = m_parent->m_object_function(pos.cbegin(), pos.cend());
 			p.fitness.store(fitness);
 			if (fitness < p.best_fitness.load()) {
 				// Update personal best
@@ -168,6 +171,10 @@ struct par_async_dpso
 				auto gbest = m_parent->m_gbest_particle.load();
 				if (gbest->best_fitness.load() <= m_parent->m_goal) return;
 
+				if ((itr + 1) % 100 == 0) {
+					printf("%lf ", gbest->best_fitness.load());
+				}
+
 				for (size_t idx = 0; idx < SwarmSize; ++idx) {
 					auto& p = m_ptr_particles->operator[](idx);
 					auto best_neighbor = best_neighbor_position(idx);
@@ -176,23 +183,22 @@ struct par_async_dpso
 					evaluate_particle(p);
 				} // end of per-particle loop
 			} // end of per-iteration loop
-
+			printf("\n");
 		}
+
 	};
 	
-	par_async_dpso(object_function_type object_function, double goal, double Xmin, double Xmax) :
+	par_async_dpso(const object_function_type object_function, double goal, double Xmin, double Xmax) :
 		m_object_function(object_function), m_goal(goal), m_Xmin(Xmin), m_Xmax(Xmax),
 		m_particles(SwarmSize){}
-	bool operator()(double best_fitness, std::vector<double>& best_position)
+	double operator()(std::vector<double>& best_position)
 	{
 		initialize_particles();
 		par_async_dpso_sub{ *this, 0, SwarmSize }();
 		auto& p = *m_gbest_particle.load();
-		best_fitness = p.best_fitness.load();
+		printf("**%lf**", p.best_fitness.load());
 		best_position.assign(p.best_position.cbegin(), p.best_position.cend());
-		return  p.best_fitness.load() <= m_goal ?
-				true :
-				false;
+		return  p.best_fitness.load();
 	}
 
 };

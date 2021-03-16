@@ -14,8 +14,8 @@ template <size_t D>
 std::tuple<bool, double, std::vector<double>> 
 simple_pso(double(*object_function)(const double*, size_t), double Xmin, double Xmax)
 {
-	auto random_position = [](double min, double max) {
-		return min + canonical_rng() * (max - min);
+	auto random_position = [](double min_x, double max_x) {
+		return min_x + canonical_rng() * (max_x - min_x);
 	};
 	static constexpr double INERTIA = 0.7298;
 	static constexpr double ACCELERATOR = 1.49618;

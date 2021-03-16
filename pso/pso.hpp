@@ -30,8 +30,8 @@ namespace hungbiu
 		using array_t = std::array<double, D>;
 		using lock_t = std::mutex;
 		std::mutex mtx;
-		std::atomic<double> best_fitness{ std::numeric_limits<double>::max() };
-		double fitness{ std::numeric_limits<double>::max() };
+		std::atomic<double> best_fitness{ std::numeric_limits<double>::max_x() };
+		double fitness{ std::numeric_limits<double>::max_x() };
 		array_t velocity, position, personal_best;
 		// Neighbor
 	};
@@ -75,7 +75,7 @@ namespace hungbiu
 		
 		std::mutex mtx;
 		std::atomic<bool> optimization_success{ false };
-		std::atomic<double> global_best{ std::numeric_limits<double>::max() };
+		std::atomic<double> global_best{ std::numeric_limits<double>::max_x() };
 		std::vector<double> global_best_pos;
 		
 		using particle_t = particle<Dimensions>;
@@ -188,8 +188,8 @@ namespace hungbiu
 				std::array<double, Dimensions> r1, r2;
 				for (size_t i = 0; i < Dimensions; ++i) {
 					if constexpr (CRAND) {
-						r1[i] = rand() / std::numeric_limits<double>::max();
-						r2[i] = rand() / std::numeric_limits<double>::max();
+						r1[i] = rand() / std::numeric_limits<double>::max_x();
+						r2[i] = rand() / std::numeric_limits<double>::max_x();
 					}
 					else {
 						r1[i] = rng.operator()();
@@ -332,7 +332,7 @@ namespace hungbiu
 		{
 			for (size_t i = 0; i < Dimensions; ++i) {
 				if constexpr (CRAND) {
-					p.position[i] = Xmin[i] + (rand() / std::numeric_limits<double>::max()) * (Xmax[i] - Xmin[i]);
+					p.position[i] = Xmin[i] + (rand() / std::numeric_limits<double>::max_x()) * (Xmax[i] - Xmin[i]);
 				}
 				else {
 					p.position[i] = Xmin[i] + rng() * (Xmax[i] - Xmin[i]);
@@ -347,7 +347,7 @@ namespace hungbiu
 				auto lo_diff = Xmin[i] - p.position[i];
 				auto hi_diff = Xmax[i] - p.position[i];
 				if constexpr (CRAND) {
-					p.velocity[i] = lo_diff + (rand() / std::numeric_limits<double>::max()) * (hi_diff - lo_diff);
+					p.velocity[i] = lo_diff + (rand() / std::numeric_limits<double>::max_x()) * (hi_diff - lo_diff);
 				}
 				else {
 					p.velocity[i] = lo_diff + rng() * (hi_diff - lo_diff);

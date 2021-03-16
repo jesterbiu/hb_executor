@@ -148,8 +148,8 @@
     <ClInclude Include="discrete_particle_test.h" />
     <ClInclude Include="expression.h" />
     <ClInclude Include="papso.h" />
+    <ClInclude Include="papso2.h" />
     <ClInclude Include="papso_test.h" />
-    <ClInclude Include="parallel_async_pso.h" />
     <ClInclude Include="particle.h" />
     <ClInclude Include="spmc_buffer.h" />
     <ClInclude Include="spmc_buffer_test.h" />
