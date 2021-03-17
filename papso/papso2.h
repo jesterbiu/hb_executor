@@ -20,104 +20,149 @@ struct my_particle {
 
 using iter = vec_t::const_iterator;
 using func_t = double(*)(iter, iter);
-std::tuple<double, vec_t>
-apso(const func_t f, double min, double max, size_t dim = 30) {
-	using particle = my_particle;
 
+class pso_state {
 	static constexpr auto swarm_size = 40u;
-	canonical_rng rng;
+	static constexpr auto iteration = 500u;
+	static constexpr auto neighbor_size = 4u;
+
+	using particle = my_particle; 
+	const func_t f;
+	size_t dimension;
+	double min, max;
+	particle* gbest = nullptr;
 	std::vector<particle> particles;
-	particles.resize(swarm_size);
+	canonical_rng rng;
 
-	// Initialize
-	auto random_xi = [&]() {
-		return min + rng() * (max - min);
-	};
-	for (particle& p : particles) {
-		p.position.resize(dim);
-		p.best_position.resize(dim);
-		p.velocity.resize(dim);
+public:
+	pso_state(const func_t f, size_t dim, double min, double max) :
+		f(f),
+		dimension(dim), min(min), max(max) {}
+	pso_state(const pso_state&) = delete;
 
-		for (size_t i = 0; i < dim; ++i) {
-			p.position[i] = random_xi();
-			p.best_position[i] = p.position[i];
-			p.velocity[i] = (random_xi() - p.position[i]) / 2.0;
+	void initialize_state() {
+		particles.resize(swarm_size);
+
+		for (particle& p : particles) {
+			p.position.resize(dimension);
+			p.best_position.resize(dimension);
+			p.velocity.resize(dimension);
 		}
-
-		p.value = f(p.position.cbegin(), p.position.cend());
-		p.best_value = p.value;
 	}
+	void initialize_swarm() { // rng() may throw?
+		auto random_xi = [&]() {
+			return min + rng() * (max - min);
+		};
 
-	// Update
-	static constexpr double INERTIA = 0.7298;
-	static constexpr double ACCELERATOR = 1.49618;
-	auto calculate_velocity = [&](double vi, double xi, double pbest, double lbest) {
+		for (particle& p : particles) {
+			for (size_t i = 0; i < dimension; ++i) {
+				p.position[i] = random_xi();
+				p.best_position[i] = p.position[i];
+				p.velocity[i] = (random_xi() - p.position[i]) / 2.0;
+			}
+
+			p.value = std::numeric_limits<double>::max();//f(p.position.cbegin(), p.position.cend());
+			p.best_value = p.value;
+		}
+	}
+	auto calculate_velocity (double vi, double xi, double pbest, double lbest) { // rng may throw?
+		static constexpr double INERTIA = 0.7298;
+		static constexpr double ACCELERATOR = 1.49618;
+
 		return INERTIA * vi
 			+ ACCELERATOR * rng() * (pbest - xi)
 			+ ACCELERATOR * rng() * (lbest - xi);
-	};
-
-	static constexpr auto iteration = 1000u;
-	static constexpr auto neighbor_size = 12u; 
-	particle* gbest = &particles[0];
-	for (size_t i = 0; i < iteration; ++i) {
-		for (size_t j = 0; j < swarm_size; ++j) { // The order of evaluation & update!
-			particle& p = particles[j];
-
-			// Lbest
-			const particle* lbest_ptr = &p; // !!Middle of neighbor
-			int underflow = j - neighbor_size / 2;
-			size_t first = (underflow > 0) ? underflow : underflow + swarm_size;
-			size_t last = first + neighbor_size;
-			first %= swarm_size;
-			last %= swarm_size;
-			for (size_t neighbor = first; neighbor <= last; ++neighbor) {
-				if (particles[neighbor].best_value < lbest_ptr->best_value) {
-					lbest_ptr = &particles[neighbor];
-				}
+	}
+	particle& update_gbest() noexcept {
+		auto tmp = &particles.front();
+		for (auto& p : particles) {
+			if (p.best_value < tmp->best_value) {
+				tmp = &p;
 			}
-			const vec_t& lbest = lbest_ptr->best_position;
-
-			// Update
-			for (size_t d = 0; d < dim; ++d) {
-				double& vi = p.velocity[d];
-				double& xi = p.position[d];
-				vi = calculate_velocity(vi, xi, p.best_position[d], lbest[d]);
-				xi += vi;
-
-				// Confinement
-				if (xi < min) {
-					xi = min;
-					vi = 0;
-				}
-				else if (xi > max) {
-					xi = max;
-					vi = 0;
-				}
-				else {
-					// nothing happens
-				}
-			} // end of dimension
-
-
-			// Evaluate
-			p.value = f(p.position.cbegin(), p.position.cend());
-			if (p.value < p.best_value) {
-				p.best_value = p.value;
-				p.best_position = p.position;
-
-				if (p.best_value < gbest->best_value) {
-					gbest = &p;
-				}
-			}
-		} // end of particle
-
-		if ((i+1) % 100 == 0) {
-			printf("%lf ", gbest->best_value);
 		}
+		gbest = tmp;
+		return *gbest;
+	}
 
-	} // end of iteration
+	void evaluate_particle(particle& p) noexcept {
+		// Evaluate
+		p.value = f(p.position.cbegin(), p.position.cend());
+		if (p.value < p.best_value) {
+			p.best_value = p.value;
+			p.best_position = p.position;
+		}
+	}
 
-	return { gbest->best_value
-		, std::move(gbest->best_position) };
+	const vec_t& get_lbest_unsafe(int idx) const noexcept {
+		const particle* lbest_ptr = &particles[idx]; // !!Middle of neighbor
+		const int max_offset = neighbor_size / 2; // Always positive
+		// offset: [-max_offset, +max_offset]
+		for (int offset = -max_offset; offset <= max_offset; ++offset) {
+			size_t neighbor = (idx + swarm_size + offset) % swarm_size; // in case (idx + offset) < 0
+			if (particles[neighbor].best_value < lbest_ptr->best_value) {
+				lbest_ptr = &particles[neighbor];
+			}
+		}
+		return lbest_ptr->best_position;
+	}
+
+	void move_particle(particle& p, const vec_t& lbest) {		
+		for (size_t d = 0; d < dimension; ++d) {
+			double& vi = p.velocity[d];
+			double& xi = p.position[d];
+			vi = calculate_velocity(vi, xi, p.best_position[d], lbest[d]);
+			xi += vi;
+
+			// Confinement
+			if (xi < min) {
+				xi = min;
+				vi = 0;
+			}
+			else if (xi > max) {
+				xi = max;
+				vi = 0;
+			}
+			else {
+				// nothing happens
+			}
+		}
+	}
+
+	void pso_main_loop() {
+		for (size_t i = 0; i < iteration; ++i) {
+			for (size_t j = 0; j < swarm_size; ++j) { // The order of evaluation & update!
+				particle& p = particles[j];
+
+				evaluate_particle(p);
+
+				// Lbest				
+				const vec_t& lbest = get_lbest_unsafe(j);
+
+				// Update velocity, position				
+				move_particle(p, lbest);
+
+			} // end of particle
+
+			if ((i + 1) % 100 == 0) {
+				printf("%lf ", update_gbest().best_value);
+			}
+		} // end of iteration
+	}
+};
+
+std::tuple<double, vec_t>
+apso(const func_t f, double min, double max, size_t dim = 30) {
+	auto pso_state_uptr = std::make_unique<pso_state>(f, dim, min, max);
+	auto& state = *pso_state_uptr;
+
+	// Initialize
+	state.initialize_state();
+	state.initialize_swarm();
+
+	// Update
+	state.pso_main_loop();
+
+	// Get result
+	auto& gbest = state.update_gbest();
+	return { gbest.best_value, std::move(gbest.best_position) };
 }

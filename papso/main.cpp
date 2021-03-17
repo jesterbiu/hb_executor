@@ -18,10 +18,9 @@ void par_async_pso_test(size_t i) {
 
 int main() {
 	for (size_t i = 0; i < test_functions::functions.size(); ++i) {
-		hungbiu_pso_test(i);
+		//hungbiu_pso_test(i);
 		par_async_pso_test(i);
 	}
-
 }
 
 

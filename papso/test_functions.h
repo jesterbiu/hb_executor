@@ -6,7 +6,11 @@
 #include <vector>
 #include <tuple>
 #include <array>
-
+#define PRINT
+#undef PRINT
+#ifdef PRINT
+#include <cstdio>
+#endif
 struct test_functions {
 	// 16 digits Pi
 	static constexpr double Pi = 245850922.0 / 78256779.0;
@@ -64,11 +68,12 @@ struct test_functions {
 	// f4
 	static double schwefel_26(iter beg, iter end) {
 		double sum = 0;
+		double dim = end - beg;
 		while (beg != end) {
-			sum = (*beg) * std::sin(std::sqrt(*beg));
+			sum += (*beg) * std::sin(std::sqrt(std::abs(*beg)));
 			beg++;
 		}
-		return sum;
+		return sum / dim;
 	}
 
 	// f5
