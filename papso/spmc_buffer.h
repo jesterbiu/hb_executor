@@ -3,6 +3,7 @@
 #include <cassert>
 #include <atomic>
 #include <array>
+#include <shared_mutex>
 #if DEBUG_PRINT
 #include <stdio.h>
 #endif
@@ -94,7 +95,8 @@ namespace hungbiu {
 				return write_idx_;
 			}
 		};
-
+	
+	public:
 		class viewer {
 			const T* pval_;
 			read_lock rlock_;
@@ -106,10 +108,9 @@ namespace hungbiu {
 		public:
 			viewer(read_lock rlock, const T* pval) :
 				pval_(pval), rlock_(std::move(rlock)) {}
-				
+			viewer(viewer&& oth) :
+				pval_(oth.pval_), rlock_(std::move(oth.rlock_)) {}
 			~viewer() {}
-			viewer(const viewer&) = delete;
-			viewer& operator=(const viewer&) = delete;
 
 			void unlock() {
 				if (rlock_.owns_lock()) {
@@ -120,6 +121,7 @@ namespace hungbiu {
 			const T* operator->() const noexcept { return get(); }
 		};
 		
+	private:
 		std::atomic<T*> pending_value_ = { nullptr }; // Non-const for buffer reuse
 		std::atomic<size_t> read_index_ = { 0 };
 		std::array<slot_type, Associativity> buffers_;
@@ -333,10 +335,10 @@ namespace hungbiu {
 
 
 	template <typename T>
-	class naive_spmc_buffer {
+	class naive_spmc_buffer { // T does not need to be aligned!
 		std::shared_mutex smtx_ alignas(64) = {};
 		T val_ alignas(64) = {};
-
+	public:
 		class viewer {
 			std::shared_lock<std::shared_mutex> slock_;
 			const T* pv_;
@@ -345,7 +347,7 @@ namespace hungbiu {
 				slock_(smtx), pv_(p) {}
 			viewer(viewer&& oth) noexcept :
 				slock_(std::move(oth.slock_))
-				, pv_(std::exchange(oth.pv_)) {}
+				, pv_(std::exchange(oth.pv_, nullptr)) {}
 			viewer() {}
 
 			void unlock() {
@@ -359,9 +361,9 @@ namespace hungbiu {
 			bool owns_lock() const noexcept { return slock_.owns_lock(); }
 			explicit operator bool() const noexcept { return slock_.owns_lock(); }
 		};
-	public:
+	
 		naive_spmc_buffer() {}
-		naive_spmc_buffer(naive_spmc_buffer&& oth) {
+		naive_spmc_buffer(naive_spmc_buffer&& oth) noexcept {
 			std::unique_lock ulock{ oth.smtx_ };
 			val_ = std::move(oth.val_);
 		}

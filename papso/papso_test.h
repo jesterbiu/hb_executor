@@ -2,7 +2,7 @@
 #include "papso.h"
 #include "test_functions.h"
 
-template <size_t D>
+template <std::size_t D>
 void papso_benchmark(const object_function_type f, const double Xmin, const double Xmax, const char* const msg)
 {
 	par_async_dpso<D> p{ f, 1e-5,Xmin, Xmax };
@@ -13,4 +13,4 @@ void papso_benchmark(const object_function_type f, const double Xmin, const doub
 	printf("\n");
 }
 
-void hungbiu_pso_test(size_t i);
+void hungbiu_pso_test(std::size_t i);

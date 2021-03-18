@@ -4,21 +4,33 @@
 */
 #pragma once
 #include <random>
-#include <concepts>
-struct canonical_rng
-{
-	std::mt19937 generator_; //Standard mersenne_twister_engine seeded with rd()
-	std::uniform_real_distribution<double> real_distribute;
+#include <memory>
+#include <new>
+#include <cstdlib>
+#include <cassert>
+class canonical_rng
+{	
+	struct alignas(64) storage {
+		
+		std::mt19937 generator_;
+		std::uniform_real_distribution<double> real_distribute;
+	
+		storage() :
+			generator_(std::random_device{}())
+			, real_distribute(0., 1.) {}
+	};
 
-	canonical_rng() :
-		generator_(std::random_device{}()), real_distribute(0., 1.) {}
-	canonical_rng(const canonical_rng& oth) :
-		generator_(oth.generator_), real_distribute(0., 1.) {}
+	std::unique_ptr<storage> storage_ptr_;
+	
+public:
+	canonical_rng() : storage_ptr_(std::make_unique<storage>()) {}
+	canonical_rng(canonical_rng&& oth) noexcept
+		: storage_ptr_(std::move(oth.storage_ptr_)) {}
 	~canonical_rng() {}
 
-	// Return real number randomly distrubuted from [0, 1)
-	inline double operator()()
-	{
-		return real_distribute(generator_);
+	inline double operator()() const {
+		assert(storage_ptr_.get());
+		auto& s = *storage_ptr_;
+		return s.real_distribute(s.generator_);
 	}
 };

@@ -7,8 +7,16 @@
 #include <cassert>
 #include <concepts>
 #include <future>
+#include <condition_variable>
+#include <mutex>
 #include "concurrent_std_deque.h"
 
+#define PRINT_ETOR
+#ifdef PRINT_ETOR
+#include <cstdio>
+#endif
+
+// lazy spin up + cv
 namespace hungbiu
 {		
 	class hb_executor
@@ -308,6 +316,7 @@ namespace hungbiu
 		}; // end of class worker handle
 	
 	private:
+		using rng_t = std::default_random_engine;
 		// --------------------------------------------------------------------------------
 		// A worker object is the working context of an OS thread
 		// --------------------------------------------------------------------------------
@@ -321,6 +330,9 @@ namespace hungbiu
 			hb_executor* etor_;
 			std::size_t index_;
 			deque_t<task_wrapper> run_stack_;
+			std::condition_variable cv_;
+			std::mutex mtx_;
+			rng_t rng_;
 
 			// Push a forked task onto stack
 			void _push(task_wrapper tw)
@@ -334,7 +346,7 @@ namespace hungbiu
 			}
 			[[nodiscard]] bool _steal(task_wrapper& tw)
 			{
-				return etor_->steal(tw, index_);
+				return etor_->steal(tw, index_, &rng_);
 			}
 		public:
 			//static constexpr auto RUN_QUEUE_SIZE = 256u;
@@ -358,20 +370,43 @@ namespace hungbiu
 					return;
 				}
 				auto h = get_handle();
-				task_wrapper tw;
 				while (!etor_->is_done()) {
+#ifdef PRINT_ETOR
+					printf("\n@worker %llu: ", this->index_);
+#endif
+					// This task wrapper must be destroyed at the end of the loop
+					task_wrapper tw; 
 					// get work from local stack 
 					if (_pop(tw)) {
+#ifdef PRINT_ETOR
+						printf("get work from local queue\n");
+#endif
 						tw.run(h);
 						continue;
 					}
 					// steal from others
-					if (etor_->steal(tw, index_)) {
+					if (etor_->steal(tw, index_, &rng_)) {
+#ifdef PRINT_ETOR
+						printf("steal work from others\n");
+#endif
 						tw.run(h);
 						continue;
 					}
+					// No task so go to sleep
+					{
+#ifdef PRINT_ETOR
+						printf("no work, tryna sleep\n");
+#endif
+						std::unique_lock lock{ mtx_ };
+						cv_.wait(lock);
+
+					}
 				}
 				associated_.store(false);
+
+#ifdef PRINT_ETOR
+				printf("\n@worker %llu: quitting...\n", this->index_);
+#endif
 			}
 			[[nodiscard]] bool try_assign(task_wrapper& tw)
 			{
@@ -381,6 +416,9 @@ namespace hungbiu
 			{
 				return run_stack_.try_pop_front(tw);
 			}
+			void notify() {
+				cv_.notify_one();
+			}
 			worker_handle get_handle() noexcept
 			{
 				return worker_handle{ this };
@@ -389,7 +427,9 @@ namespace hungbiu
 		// Worker thread's main function
 		static void thread_main(hb_executor* this_, std::size_t init_idx)
 		{
-			// 
+#ifdef PRINT_ETOR
+			printf("@thread %llu: spinning up\n", init_idx);
+#endif
 			this_->workers_[init_idx].operator()();
 			for (;;) {
 				if (this_->is_done()) {
@@ -404,20 +444,29 @@ namespace hungbiu
 					}
 				}
 			}
+#ifdef PRINT_ETOR
+			printf("@thread: shutting down\n");
+#endif
 		}
 		
 		// --------------------------------------------------------------------------------
 		// Data members of executor
 		// --------------------------------------------------------------------------------
 		mutable std::atomic<bool> is_done_{ false };
+		std::atomic<size_t> ticket_{ 0 };
 		std::vector<worker> workers_;
 		std::vector<std::thread> threads_;
 
 	public:
 		bool done() noexcept
 		{
+			if (is_done()) {
+				return true;
+			}
+
 			bool done = false;
-			return is_done_.compare_exchange_strong(done, true, std::memory_order_acq_rel);
+			is_done_.compare_exchange_strong(done, true, std::memory_order_acq_rel);
+			return is_done();
 		}
 		bool is_done() const noexcept
 		{
@@ -426,44 +475,62 @@ namespace hungbiu
 
 	private:
 		// not thread-safe (single producer, multi consumers)
-		std::size_t random_idx() noexcept
+		std::size_t random_idx(rng_t* rng) noexcept
 		{
 			static std::mt19937_64 engine;
-			return std::uniform_int_distribution<std::size_t>()(engine);
+			if (rng) {
+				return std::uniform_int_distribution<std::size_t>()(*rng);
+			}
+			else {
+				return std::uniform_int_distribution<std::size_t>()(engine);
+			}
 		}
 		void dispatch(task_wrapper tw)
 		{
-			auto idx = random_idx();
+			auto idx = ticket_.load();
 			const auto sz = workers_.size();
 			for (;;) {
+#ifdef PRINT_ETOR
+				printf("\n@dispatcher: ");
+#endif
 				if (workers_[idx % sz].try_assign(tw)) {
+					workers_[idx % sz].notify();
+					ticket_.compare_exchange_strong(idx, idx + 1, std::memory_order_acq_rel);
+#ifdef PRINT_ETOR
+					printf("assign work to @worker %llu\n", idx % sz);
+#endif
 					break;
 				}
 				else {
 					++idx;
 				}
+				// Fall back to sleep
 			}
 		} 
-		[[nodiscard]] bool steal(task_wrapper& tw, const std::size_t idx)
+		[[nodiscard]] bool steal(task_wrapper& tw, const std::size_t idx, rng_t* rng)
 		{
-			static constexpr auto MAX_RAND_STEAL_ATTEMPTS = 64u;
-
+#ifdef PRINT_ETOR
+			printf("\n@worker %llu try to steal: ", idx);
+#endif
 			// Try stealing randomly 
-			const auto sz = workers_.size();
-			for (auto i = 0; i != MAX_RAND_STEAL_ATTEMPTS; ++i) {
-				auto victim_idx = random_idx() % sz;
-				if (victim_idx == idx) {
-					continue;
-				}					
-				if (workers_[victim_idx].try_steal(tw)) {
-					return true;
-				}
+			size_t victim_idx = random_idx(rng) % workers_.size();
+			while (victim_idx == idx) {
+				victim_idx = random_idx(rng) % workers_.size();
+			}
+			if (workers_[victim_idx].try_steal(tw)) {
+#ifdef PRINT_ETOR
+				printf("task stolen at first try from @worker %llu\n", victim_idx);
+#endif
+				return true;
 			}
 
 			// If failed to find a victim after pre-def attempts, 
 			// decay to traversal
-			for (auto i = 0; i != sz; ++i) {
-				if (workers_[i].try_steal(tw)) {
+			for (auto& worker : workers_) {
+				if (worker.try_steal(tw)) {
+#ifdef PRINT_ETOR
+					printf("task stolen from @worker %llu\n", victim_idx);
+#endif
 					return true;
 				}
 			}
@@ -482,9 +549,25 @@ namespace hungbiu
 		}
 		~hb_executor()
 		{
-			for (auto& t : threads_) {
-				t.join();
+#ifdef PRINT_ETOR
+			printf("\n@~executor call done(): ");
+#endif
+			while (!done()) {
+#ifdef PRINT_ETOR
+				printf("%s\n", is_done() ? "yes" : "no");
+#endif
 			}
+			for (auto& worker : workers_) {				
+				if (worker.is_associated()) {
+					worker.notify();
+				}
+			}
+			for (auto& thread : threads_) {
+				thread.join();
+			}
+#ifdef PRINT_ETOR
+			printf("\n@hb_executor: end\n");
+#endif
 		}
 
 		hb_executor(const hb_executor&) = delete;
