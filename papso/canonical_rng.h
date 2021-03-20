@@ -2,7 +2,8 @@
 * Random number generator with normal distribution within [0, 1)
 * Change this to a object?
 */
-#pragma once
+#ifndef _CANONICAL_RNG
+#define _CANONICAL_RNG
 #include <random>
 #include <memory>
 #include <new>
@@ -34,3 +35,4 @@ public:
 		return s.real_distribute(s.generator_);
 	}
 };
+#endif

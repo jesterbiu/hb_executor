@@ -1,4 +1,5 @@
-#pragma once
+#ifndef _SMPC_BUFFER
+#define _SMPC_BUFFER
 #define DEBUG_PRINT 0
 #include <cassert>
 #include <atomic>
@@ -380,3 +381,5 @@ namespace hungbiu {
 		}
 	};
 }
+
+#endif 

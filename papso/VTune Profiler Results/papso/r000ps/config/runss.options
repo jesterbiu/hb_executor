@@ -1,0 +1,16 @@
+-r
+C:\Users\HASEE\source\repos\hb_executor\papso\VTune Profiler Results\papso\r000ps
+--stack-stitching
+--data-limit-mb=1000
+--disk-space-limit=0
+--mrte-type=java,dotnet
+--no-follow-child
+--itt-config=frame
+--stackwalk=offline
+--mrte-mode=auto
+--type=cpu:counters:nostack
+--type=cpu:nostack
+--interval=100
+--
+C:\Users\HASEE\source\repos\hb_executor\x64\Release\papso.exe
+1

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef _EXECUTOR
+#define _EXECUTOR
 #include <type_traits>
 #include <memory>
 #include <vector>
@@ -352,7 +353,11 @@ namespace hungbiu
 			//static constexpr auto RUN_QUEUE_SIZE = 256u;
 			worker(hb_executor& etor, std::size_t idx) :
 				etor_(&etor), index_(idx) {}
-			~worker() {}
+			~worker() {
+#ifdef PRINT_ETOR
+				printf("~worker(): @%llu\n", this->index_);
+#endif
+			}
 			worker(worker&& oth) noexcept :
 				associated_(oth.associated_.load()),
 				etor_(std::exchange(oth.etor_, nullptr)),
@@ -395,12 +400,19 @@ namespace hungbiu
 					// No task so go to sleep
 					{
 #ifdef PRINT_ETOR
-						printf("no work, tryna sleep\n");
+						printf("no work, tryna sleep, lock the mutex...\n");
 #endif
 						std::unique_lock lock{ mtx_ };
-						cv_.wait(lock);
-
+						if (etor_->is_done()) {
+							break;
+						}
+						else {
+							cv_.wait(lock);
+						}
 					}
+#ifdef PRINT_ETOR
+					printf("@worker %llu: ...mutex unlocked, wake up to see\n", this->index_);
+#endif
 				}
 				associated_.store(false);
 
@@ -424,6 +436,7 @@ namespace hungbiu
 				return worker_handle{ this };
 			}
 		};
+
 		// Worker thread's main function
 		static void thread_main(hb_executor* this_, std::size_t init_idx)
 		{
@@ -431,7 +444,7 @@ namespace hungbiu
 			printf("@thread %llu: spinning up\n", init_idx);
 #endif
 			this_->workers_[init_idx].operator()();
-			for (;;) {
+			/*for (;;) {
 				if (this_->is_done()) {
 					return;
 				}
@@ -443,7 +456,7 @@ namespace hungbiu
 						w.operator()();
 					}
 				}
-			}
+			}*/
 #ifdef PRINT_ETOR
 			printf("@thread: shutting down\n");
 #endif
@@ -455,7 +468,7 @@ namespace hungbiu
 		mutable std::atomic<bool> is_done_{ false };
 		std::atomic<size_t> ticket_{ 0 };
 		std::vector<worker> workers_;
-		std::vector<std::thread> threads_;
+		std::vector<std::jthread> threads_;
 
 	public:
 		bool done() noexcept
@@ -514,7 +527,8 @@ namespace hungbiu
 #endif
 			// Try stealing randomly 
 			size_t victim_idx = random_idx(rng) % workers_.size();
-			while (victim_idx == idx) {
+			while (workers_.size() > 1 
+				&& (victim_idx == idx)) {
 				victim_idx = random_idx(rng) % workers_.size();
 			}
 			if (workers_[victim_idx].try_steal(tw)) {
@@ -556,15 +570,11 @@ namespace hungbiu
 #ifdef PRINT_ETOR
 				printf("%s\n", is_done() ? "yes" : "no");
 #endif
+			}			
+			for (auto& w : workers_) {
+				w.notify();
 			}
-			for (auto& worker : workers_) {				
-				if (worker.is_associated()) {
-					worker.notify();
-				}
-			}
-			for (auto& thread : threads_) {
-				thread.join();
-			}
+			
 #ifdef PRINT_ETOR
 			printf("\n@hb_executor: end\n");
 #endif
@@ -599,3 +609,5 @@ namespace hungbiu
 	template <typename F>
 	concept is_hb_task = std::invocable<F, hb_executor::worker_handle&>;
 }
+
+#endif

@@ -1,4 +1,6 @@
-#pragma once
+#ifndef _TEST_FUNCTIONS
+#define _TEST_FUNCTIONS
+
 #include <cmath>
 #include <numeric>
 #include <algorithm>
@@ -140,3 +142,5 @@ struct test_functions {
 		"rastrigin", "ackley", "griewank"
 	};
 };
+
+#endif

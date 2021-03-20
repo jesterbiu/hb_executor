@@ -1,4 +1,6 @@
-#pragma once
+#ifndef _PAPSO2
+#define _PAPSO2
+
 #include <vector>
 #include <tuple>
 #include <variant>
@@ -9,6 +11,7 @@
 #include <type_traits>
 #include <mutex>
 #include <condition_variable>
+#include <future>
 #include "../hb_executor/executor.h"
 #include "spmc_buffer.h"
 #include "canonical_rng.h"
@@ -21,7 +24,7 @@ using iter = vec_t::const_iterator;
 using func_t = double(*)(iter, iter);
 using bound_t = std::pair<double, double>;
 
-class pso_state {
+class papso {
 	template <typename T>
 	class alignas(64) aligned_atomic_t {
 		std::atomic<T> value_;
@@ -49,9 +52,6 @@ class pso_state {
 		vec_t best_position;
 	};
 public:
-	static constexpr auto swarm_size = 40u;
-	static constexpr auto iteration = 500u;
-	static constexpr auto neighbor_size = 4u;
 
 	using particle = my_particle;
 	using atomic_double = aligned_atomic_t<double>;
@@ -60,7 +60,12 @@ public:
 	using range_t = std::pair<size_t, size_t>;
 	using worker_handle = hungbiu::hb_executor::worker_handle;
 
+	static constexpr size_t swarm_size = 40u;
+	static constexpr size_t iteration = 500u;
+	static constexpr size_t neighbor_size = 2u;
+	static constexpr bool track_convergency = false;
 private:
+
 	const func_t f;
 	size_t dimension;
 	double min, max;
@@ -79,13 +84,12 @@ private:
 	size_t forks = 0 ;
 
 	class fork_tracer {
-		pso_state* state_ptr;
+		papso* state_ptr;
 	public:
-		fork_tracer(pso_state* p) 
+		fork_tracer(papso* p) 
 			: state_ptr(p) {
 			std::lock_guard guard{ p->completion_mtx };
 			p->forks++;
-			printf("forks++: %llu\n", p->forks);
 		}
 		fork_tracer(fork_tracer&& oth) noexcept
 			: state_ptr(std::exchange(oth.state_ptr, nullptr)) {}
@@ -98,7 +102,6 @@ private:
 			{ // Critical section
 				std::lock_guard guard{ state_ptr->completion_mtx };
 				state_ptr->forks--;
-				printf("forks--: %llu\n", state_ptr->forks);
 				if (0 == state_ptr->forks) {
 					is_completed = true;
 				}
@@ -110,14 +113,13 @@ private:
 		}
 	};
 
-	friend std::tuple<double, vec_t>
-		apso(hungbiu::hb_executor&, const func_t, const bound_t&, size_t dim);
 public:
-	pso_state(const func_t f, const bound_t& bounds, size_t dim) :
+	papso(const func_t f, const bound_t& bounds, size_t dim) :
 		f(f),
 		dimension(dim), min(bounds.first), max(bounds.second) {}
-	pso_state(const pso_state&) = delete;
+	papso(const papso&) = delete;
 
+private:
 	void initialize_state(size_t fork_count) { // Tons of allocations
 		particles.resize(swarm_size);
 		best_values.resize(swarm_size);
@@ -133,20 +135,40 @@ public:
 		}
 	}
 	
-	void initialize_swarm(canonical_rng& rng) { // rng() may throw?
+	void evaluate_particle(size_t i) noexcept {
+		// Evaluate
+		particle& p = particles[i];
+		p.value = f(p.position.cbegin(), p.position.cend());
+
+		// Update pbest
+		if (p.value < p.best_value) {
+			p.best_value = p.value;
+			p.best_position = p.position;
+
+			// Publish
+			best_values[i].store(p.value);
+			best_positions[i].put(p.best_position);
+		}
+	}
+
+	void initialize_swarm(canonical_rng& rng) { // Must evaluate particles first!
 		auto random_xi = [&]() {
 			return min + rng() * (max - min);
 		};
 
-		for (particle& p : particles) {
-			for (size_t i = 0; i < dimension; ++i) {
-				p.position[i] = random_xi();
-				p.best_position[i] = p.position[i];
-				p.velocity[i] = (random_xi() - p.position[i]) / 2.0;
+		for (size_t i = 0; i < swarm_size; ++i) { // particle i
+			particle& p = particles[i];
+			for (size_t j = 0; j < dimension; ++j) { // dimension j
+				p.position[j] = random_xi();
+				p.best_position[j] = p.position[j];
+				p.velocity[j] = (random_xi() - p.position[j]) / 2.0;
 			}
 
-			p.value = std::numeric_limits<double>::max();//f(p.position.cbegin(), p.position.cend());
-			p.best_value = p.value;
+			p.best_value = p.value = f(p.position.cbegin(), p.position.cend());
+			
+			// Publish
+			best_values[i].store(p.best_value);
+			best_positions[i].put(p.best_position);
 		}
 	}	
 	
@@ -163,21 +185,6 @@ public:
 		}
 		gbest.store(best_ptr, std::memory_order_release);
 		return *best_ptr;
-	}
-
-	void evaluate_particle(size_t i) noexcept {
-		// Evaluate
-		particle& p = particles[i];
-		p.value = f(p.position.cbegin(), p.position.cend());
-
-		// Update pbest
-		if (p.value < p.best_value) {
-			p.best_value = p.value;
-			p.best_position = p.position;
-
-			best_values[i].store(p.value);
-			best_positions[i].put(p.best_position);
-		}
 	}
 
 	const vec_t& get_lbest_unsafe(int idx) const noexcept {
@@ -281,52 +288,84 @@ public:
 			} // end of particle
 
 			if ((i + 1) % 100 == 0) {
-				printf("%lf ", update_gbest().best_value);
+				auto gbest = update_gbest();
+				if (track_convergency) {
+					printf("%6.4lf ", gbest.best_value);
+				}
 			}
 		} // end of iteration
 	}
 
 	auto fork(range_t range, canonical_rng* rng_ptr) {
-		return [tracer = fork_tracer(this), this, &range, rng_ptr](worker_handle& wh) {
+		return [tracer = fork_tracer(this), this, range, rng_ptr] (worker_handle& wh) {
 			pso_main_loop(range, rng_ptr, wh);
 		};
 	}
+
+public:
+
+	class papso_result_t {
+		std::unique_ptr<papso> state_;
+	public:
+		papso_result_t(std::unique_ptr<papso> state)
+			: state_(std::move(state)) {}
+		papso_result_t(papso_result_t&& oth) noexcept
+			: state_(std::move(oth.state_)) {}
+		papso_result_t& operator= (papso_result_t&& rhs) noexcept {
+			state_ = std::move(rhs.state_);
+			return *this;
+		}
+
+		// Block until finished
+		std::tuple<double, vec_t> get() {
+			auto& state = *state_;
+			auto check_for_completion = [&]() {
+				bool is_completed = (0 == state.forks);
+				return is_completed;
+			};
+
+			// Wait for finish
+			{
+				std::unique_lock lock{ state.completion_mtx };
+				state.completion_cv.wait(lock, check_for_completion);
+			}
+
+			// Get result
+			auto& gbest = state.update_gbest();
+			double best_value = gbest.best_value;
+			vec_t best_position = std::move(gbest.best_position);
+			state_.reset(); // Release resource
+			return { best_value, std::move(best_position) };
+		}
+	};
+
+
+	//static constexpr size_t fork_size = 20;
+	//static constexpr size_t fork_count = papso::swarm_size / fork_size
+	//	+ (papso::swarm_size % fork_size > 0);
+
+	static auto parallel_async_pso(hungbiu::hb_executor& etor, size_t fork_count, const func_t f, const bound_t& bounds, size_t dim = 30) {
+		auto pso_state_uptr = std::make_unique<papso>(f, bounds, dim);
+		auto& state = *pso_state_uptr;
+
+		using worker_handle = hungbiu::hb_executor::worker_handle;
+
+		// Initialize
+		state.initialize_state(fork_count);
+		state.initialize_swarm(state.rngs[0]);
+
+		// Forks
+		assert(0 == (state.swarm_size % fork_count));
+		size_t fork_size = state.swarm_size / fork_count;
+		for (size_t i = 0; i < fork_count; ++i) {
+			size_t left = fork_size * i;
+			size_t right = (i + 1) * fork_size;
+			right = std::min<size_t>(right, papso::swarm_size);
+			etor.execute(state.fork({ left, right }, &state.rngs[i]));
+		}
+
+		return papso::papso_result_t{ std::move(pso_state_uptr) };
+	}
 };
 
-
-static constexpr size_t fork_size = 20;
-static constexpr size_t fork_count = pso_state::swarm_size / fork_size 
-									+ (pso_state::swarm_size % fork_size > 0);
-std::tuple<double, vec_t>
-apso(hungbiu::hb_executor& etor, const func_t f, const bound_t& bounds, size_t dim = 30) {
-	auto pso_state_uptr = std::make_unique<pso_state>(f, bounds, dim);
-	auto& state = *pso_state_uptr;
-
-	using worker_handle = hungbiu::hb_executor::worker_handle;
-
-	// Initialize
-	state.initialize_state(fork_count);
-	state.initialize_swarm(state.rngs[0]);
-
-	// Main
-	for (size_t i = 0; i < fork_count; ++i) {
-		size_t left = fork_size * i;
-		size_t right =  (i + 1) * fork_size; 
-		right = std::min<size_t>(right, pso_state::swarm_size);
-		etor.execute( state.fork({ left, right }, &state.rngs[i]) );
-	}
-
-	// Wait for finish
-	{
-		std::unique_lock lock{ state.completion_mtx };
-		state.completion_cv.wait(lock, [&]() {
-			bool is_completed = (0 == state.forks);
-			printf("woke up to see that forks = %llu\n", state.forks);
-			return is_completed;
-			});
-	}
-
-	// Get result
-	auto& gbest = state.update_gbest();
-	return { gbest.best_value, std::move(gbest.best_position) };
-}
+#endif
