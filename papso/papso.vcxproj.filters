@@ -63,6 +63,9 @@
     <ClInclude Include="papso2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="papso2_test.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">

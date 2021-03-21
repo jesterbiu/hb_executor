@@ -1,4 +1,6 @@
-#pragma once
+#ifndef _EXPRESSION
+#define _EXPRESSION
+
 #include <vector>
 #include <functional>
 #include <tuple>
@@ -59,3 +61,6 @@ namespace hungbiu {
 		return result;
 	}
 }
+
+
+#endif

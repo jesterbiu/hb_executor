@@ -10,9 +10,9 @@
 #include <future>
 #include <condition_variable>
 #include <mutex>
+#include <thread>
 #include "concurrent_std_deque.h"
-
-#define PRINT_ETOR
+//#define PRINT_ETOR
 #ifdef PRINT_ETOR
 #include <cstdio>
 #endif
@@ -133,7 +133,7 @@ namespace hungbiu
 			void (*_run)(void*, worker_handle&);
 		};
 
-		static constexpr auto small_size = sizeof(void*) * 4;
+		static constexpr auto small_size = sizeof(void*) * 7;
 		template <typename T>
 		static constexpr bool is_small_object() { return sizeof(T) <= small_size; }
 
@@ -321,18 +321,27 @@ namespace hungbiu
 		// --------------------------------------------------------------------------------
 		// A worker object is the working context of an OS thread
 		// --------------------------------------------------------------------------------
-		class worker
+		class alignas(64) worker
 		{
 			friend class worker_handle;
 			template <typename T>
 			using deque_t = concurrent_std_deque<T>;
 
-			std::atomic<bool> associated_{ false };
 			hb_executor* etor_;
 			std::size_t index_;
 			deque_t<task_wrapper> run_stack_;
-			std::condition_variable cv_;
-			std::mutex mtx_;
+			std::condition_variable_any cv_;
+			std::mutex mtx_; // use this mutex to wait for condition
+
+			// Waiting, Ready, Running
+			// `Waiting` -> `Ready`:   Dispatcher makes a worker `Ready` after assigning task to it;
+			// `Ready` -> `Running`:   Worker makes itself run when resume from waiting on cv
+			// `Running` -> `Waiting`: Worker waits on cv if it can't find any task
+			//static constexpr unsigned Waiting = 0b0001; // Waiting for task
+			//static constexpr unsigned Pending = 0b0010; // Has pending task
+			//static constexpr unsigned Running = 0b0100; // Executing task
+
+			unsigned alignas(64) unsigned pending_{ 0 };
 			rng_t rng_;
 
 			// Push a forked task onto stack
@@ -358,22 +367,16 @@ namespace hungbiu
 				printf("~worker(): @%llu\n", this->index_);
 #endif
 			}
-			worker(worker&& oth) noexcept :
-				associated_(oth.associated_.load()),
-				etor_(std::exchange(oth.etor_, nullptr)),
-				index_(oth.index_),
-				run_stack_(std::move(oth.run_stack_)) {}
+			worker(worker&& oth) noexcept // Should not be used, only for vector
+				: etor_(std::exchange(oth.etor_, nullptr))
+				, index_(std::exchange(oth.index_, -1))
+				, run_stack_(std::move(oth.run_stack_))
+				/*, state_(oth.state_)*/
+				, rng_(std::move(oth.rng_)) {}
 			worker& operator=(const worker&) = delete;
 
-			[[nodiscard]] bool is_associated() const noexcept
+			void operator()(std::stop_token stoken)
 			{
-				return associated_.load(std::memory_order_acquire);
-			}
-			void operator()()
-			{
-				if (associated_.exchange(true, std::memory_order_acq_rel)) {
-					return;
-				}
 				auto h = get_handle();
 				while (!etor_->is_done()) {
 #ifdef PRINT_ETOR
@@ -381,6 +384,7 @@ namespace hungbiu
 #endif
 					// This task wrapper must be destroyed at the end of the loop
 					task_wrapper tw; 
+					
 					// get work from local stack 
 					if (_pop(tw)) {
 #ifdef PRINT_ETOR
@@ -389,6 +393,7 @@ namespace hungbiu
 						tw.run(h);
 						continue;
 					}
+					
 					// steal from others
 					if (etor_->steal(tw, index_, &rng_)) {
 #ifdef PRINT_ETOR
@@ -397,25 +402,27 @@ namespace hungbiu
 						tw.run(h);
 						continue;
 					}
-					// No task so go to sleep
+					
+					// Try to go to sleep(waiting on a cv) if no task found
+					// The cv is hooked to `jthread` object so OS thread could be woken 
+					// during `cv.wait()` if `stop_requested()`
 					{
 #ifdef PRINT_ETOR
 						printf("no work, tryna sleep, lock the mutex...\n");
-#endif
+#endif					
 						std::unique_lock lock{ mtx_ };
-						if (etor_->is_done()) {
+						// Wait for notification or stop request(interrupts)
+						cv_.wait(lock, stoken, [this]() { return pending_; });
+
+#ifdef PRINT_ETOR
+						printf("@worker %llu: ...mutex relocked, wake up to see\n", this->index_);
+#endif
+						if (stoken.stop_requested()) {
 							break;
 						}
-						else {
-							cv_.wait(lock);
-						}
-					}
-#ifdef PRINT_ETOR
-					printf("@worker %llu: ...mutex unlocked, wake up to see\n", this->index_);
-#endif
-				}
-				associated_.store(false);
-
+						pending_ = false;
+					} // end of unique lock
+				} // End of while loop
 #ifdef PRINT_ETOR
 				printf("\n@worker %llu: quitting...\n", this->index_);
 #endif
@@ -428,7 +435,27 @@ namespace hungbiu
 			{
 				return run_stack_.try_pop_front(tw);
 			}
-			void notify() {
+			void notify_work() {
+				//{
+				//	std::lock_guard guard{ mtx_ };
+				//	if (Running == state_) {
+				//		// Worker will poll new tasks after finishing current task
+				//		return; 
+				//	}
+				//	else if (Pending & state_) { 
+				//		// Notify only
+				//		// Set to `Pending` always followed by notify()
+				//	}
+				//	else if (Waiting & state_) {
+				//		// Set `Pending` and notify worker
+				//		state_ |= Pending;
+				//	}
+				//	else {} // Nothing
+				//}
+				{
+					std::lock_guard guard{ mtx_ };
+					pending_ = static_cast<unsigned>(true);
+				}
 				cv_.notify_one();
 			}
 			worker_handle get_handle() noexcept
@@ -438,12 +465,12 @@ namespace hungbiu
 		};
 
 		// Worker thread's main function
-		static void thread_main(hb_executor* this_, std::size_t init_idx)
+		static void thread_main(std::stop_token stoken, hb_executor* this_, std::size_t init_idx)
 		{
 #ifdef PRINT_ETOR
 			printf("@thread %llu: spinning up\n", init_idx);
 #endif
-			this_->workers_[init_idx].operator()();
+			this_->workers_[init_idx].operator()(std::move(stoken));
 			/*for (;;) {
 				if (this_->is_done()) {
 					return;
@@ -507,10 +534,10 @@ namespace hungbiu
 				printf("\n@dispatcher: ");
 #endif
 				if (workers_[idx % sz].try_assign(tw)) {
-					workers_[idx % sz].notify();
+					workers_[idx % sz].notify_work();
 					ticket_.compare_exchange_strong(idx, idx + 1, std::memory_order_acq_rel);
 #ifdef PRINT_ETOR
-					printf("assign work to @worker %llu\n", idx % sz);
+					printf("assign work to and notified @worker %llu\n", idx % sz);
 #endif
 					break;
 				}
@@ -571,8 +598,8 @@ namespace hungbiu
 				printf("%s\n", is_done() ? "yes" : "no");
 #endif
 			}			
-			for (auto& w : workers_) {
-				w.notify();
+			for (auto& t : threads_) {
+				t.request_stop();
 			}
 			
 #ifdef PRINT_ETOR

@@ -303,7 +303,7 @@
        <launch_app.app_to_launch>C:\Users\HASEE\source\repos\hb_executor\x64\Release\papso.exe</launch_app.app_to_launch>
        <launch_app.environment></launch_app.environment>
        <result_directory.path>C:\Users\HASEE\source\repos\hb_executor\papso\VTune Profiler Results\papso\r@@@{at}</result_directory.path>
-       <launch_app.app_parameters>1</launch_app.app_parameters>
+       <launch_app.app_parameters>8</launch_app.app_parameters>
        <launch_app.working_folder>C:\Users\HASEE\source\repos\hb_executor\x64\Release</launch_app.working_folder>
        <context>
         <contextValue>
@@ -409,7 +409,7 @@
       <knob_values>
        <contextValue>
         <id>collectMemoryBW</id>
-        <value type="bool">false</value>
+        <value type="bool">true</value>
        </contextValue>
        <contextValue>
         <id>dramBandwidthLimitsAT</id>

@@ -117,7 +117,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <Optimization>Disabled</Optimization>
+      <Optimization>MaxSpeed</Optimization>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -150,6 +150,7 @@
     <ClInclude Include="expression.h" />
     <ClInclude Include="papso.h" />
     <ClInclude Include="papso2.h" />
+    <ClInclude Include="papso2_test.h" />
     <ClInclude Include="papso_test.h" />
     <ClInclude Include="particle.h" />
     <ClInclude Include="spmc_buffer.h" />
